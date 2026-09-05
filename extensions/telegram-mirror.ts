@@ -41,6 +41,7 @@ import { getSettingsListTheme, type ExtensionAPI, type ExtensionContext }
   from "@earendil-works/pi-coding-agent";
 import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
 import { sendTelegramDelivery, type QueuedImage } from "./telegram-delivery.ts";
+import { formatProviderQuota, readCodexQuota } from "./telegram-quota.ts";
 
 type BotFrame = {
   t?: string;
@@ -364,6 +365,15 @@ function finalVisibleReply(message: unknown): string {
   return assistantText(message);
 }
 
+export function formatTokenUsage(ctx: ExtensionContext | null, quotaText: string): string {
+  if (!ctx) return "Provider quota: unavailable (Pi is disconnected).";
+  const context = ctx.getContextUsage();
+  const contextText = context && context.tokens !== null && Number.isFinite(context.contextWindow)
+    ? `${context.tokens} / ${context.contextWindow} tokens (${context.percent === null ? "unavailable" : `${context.percent}%`})`
+    : "unavailable";
+  return `${quotaText}\nPi session context (separate from provider quota): ${contextText}`;
+}
+
 export default function (pi: ExtensionAPI) {
   // A session that can never hold this home's lock stays completely inert: no
   // socket, no footer, no commands. A session that simply has not been recorded
@@ -500,7 +510,7 @@ export default function (pi: ExtensionAPI) {
     client.on("close", drop);
   }
 
-  function handleFrame(line: string): void {
+  async function handleFrame(line: string): Promise<void> {
     let frame: BotFrame;
     try {
       frame = JSON.parse(line) as BotFrame;
@@ -515,6 +525,13 @@ export default function (pi: ExtensionAPI) {
       if (typeof frame.mirror === "boolean") mirrorOn = frame.mirror;
       if (typeof frame.confirmations === "boolean") confirmations = frame.confirmations;
       refreshFooter();
+      return;
+    }
+    if (frame.t === "command" && frame.command === "token_usage" && typeof frame.id === "number") {
+      // Codex's local app-server reads account quota without model inference;
+      // credentials remain inside Codex and are never read by this extension.
+      const quotaText = await readCodexQuota().then(formatProviderQuota).catch(() => formatProviderQuota(undefined));
+      write({ t: "command_result", id: frame.id, text: formatTokenUsage(activeCtx, quotaText) });
       return;
     }
     if (frame.t === "command_result" && typeof frame.id === "number") {

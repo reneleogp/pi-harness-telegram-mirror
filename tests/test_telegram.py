@@ -110,6 +110,38 @@ def test_environment_token_is_not_an_authorized_source(tmp_path, monkeypatch):
         raise AssertionError("environment token was accepted")
 
 
+def test_token_usage_routes_to_pi_without_queueing_conversation_text():
+    bot = load_bot()
+    mirror = bot.MirrorBot(bot.Config(Path("/tmp"), "token", 1, 1, "transcribe", "http://fake"), bot.TelegramApi("http://fake", "token"))
+    writes = []
+    async def fake_write(frame):
+        writes.append(frame)
+        return True
+    mirror.write_frame = fake_write
+    mirror.client = object()
+    mirror.client_ready = True
+    async def exercise():
+        task = asyncio.create_task(mirror.request_pi_command(bot.TOKEN_USAGE_COMMAND))
+        await asyncio.sleep(0)
+        assert writes == [{"t": "command", "id": 1, "command": "token_usage"}]
+        await mirror.handle_frame({"t": "command_result", "id": 1, "text": "Provider quota: unavailable"})
+        return await task
+    assert asyncio.run(exercise()) == "Provider quota: unavailable"
+    assert not mirror.queue and not mirror.pending
+
+
+def test_provider_quota_formatter_is_provider_neutral_and_unavailable_safe():
+    script = r'''import { formatProviderQuota } from "./extensions/telegram-quota.ts";
+const value = formatProviderQuota({ provider: "OpenAI Codex", windows: [
+  { label: "weekly", remainingPercent: 87, resetAt: "2030-01-01T00:00:00.000Z" },
+] });
+if (!value.includes("Provider quota") || !value.includes("87% remaining") || !value.includes("reset")) throw new Error(value);
+if (!formatProviderQuota(undefined).includes("unavailable")) throw new Error("missing unavailable state");
+'''
+    result = subprocess.run(["node", "--experimental-strip-types", "--input-type=module", "-"], cwd=ROOT, input=script, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_commands_and_image_validation_are_observable():
     bot = load_bot()
     config = bot.Config(Path("/tmp"), "token", 1, 1, "transcribe", "http://fake")
