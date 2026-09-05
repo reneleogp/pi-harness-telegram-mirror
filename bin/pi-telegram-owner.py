@@ -86,9 +86,12 @@ def acquire_guard():
             return acquire_guard()
         except OSError:
             return ""
+def guard_owned(token):
+    try: return GUARD.read_text() == token
+    except OSError: return False
 def release(token):
     try:
-        if GUARD.read_text() == token: GUARD.unlink()
+        if guard_owned(token): GUARD.unlink()
     except OSError: pass
 def is_requester(pid):
     if pid != os.getppid(): return False
@@ -109,6 +112,7 @@ def claim(cwd, owner_pid=None):
         if old and alive(old) and not (int(old.get("pid",-1))==pid and old.get("root")==root): return 1
         if pid <= 0 or not is_requester(pid): return 1
         record={"pid":pid,"uid":uid,"start":identity(pid),"root":root,"incarnation":secrets.token_hex(16)}
+        if not guard_owned(guard): return 1
         tmp=RECORD.with_name(".session.tmp.%s"%secrets.token_hex(8)); tmp.write_text(json.dumps(record)+"\n"); tmp.chmod(0o600); os.replace(tmp,RECORD); return 0
     finally: release(guard)
 def check(cwd):
