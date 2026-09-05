@@ -132,6 +132,8 @@ def matches_executable(pid, expected):
     if target.is_absolute():
         return executable == os.path.realpath(str(target))
     name = target.name
+    if sys.platform == "darwin":
+        return Path(executable).name == name
     return Path(executable).name == name or any(Path(part).name == name for part in process_command(pid))
 
 def has_pi_ancestor(pid):
