@@ -486,6 +486,7 @@ class Queued:
     image: Optional[dict[str, str]] = None
     image_bytes: int = 0
     rejection_retries: int = 0
+    retry_scheduled: bool = False
 
 
 @dataclass
@@ -818,6 +819,13 @@ class MirrorBot:
         if item.rejection_retries < 1:
             item.rejection_retries += 1
             await self.pump()
+        elif not item.retry_scheduled:
+            item.retry_scheduled = True
+            asyncio.create_task(self.retry_rejected())
+
+    async def retry_rejected(self) -> None:
+        await asyncio.sleep(1)
+        await self.pump()
 
     # --- voice ---
 
