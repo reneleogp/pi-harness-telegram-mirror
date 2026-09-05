@@ -23,14 +23,18 @@ function number(value: unknown): number | undefined {
 function windowFrom(value: unknown, fallback: string): QuotaWindow | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as Record<string, unknown>;
-  const used = number(raw.used_percent ?? raw.usedPercent);
+  const used = number(raw.usedPercent ?? raw.used_percent);
   if (used === undefined || used < 0 || used > 100) return undefined;
-  const seconds = number(raw.reset_at ?? raw.resetAt);
-  const resetAt = seconds === undefined
+  const resetSeconds = number(raw.resetsAt ?? raw.reset_at ?? raw.resetAt);
+  const resetAt = resetSeconds === undefined
     ? undefined
-    : new Date(seconds > 10_000_000_000 ? seconds : seconds * 1000).toISOString();
-  const duration = number(raw.limit_window_seconds ?? raw.windowDurationMins);
-  const label = duration !== undefined && duration <= 8 * 60 * 60 ? "5-hour" : fallback;
+    : new Date(resetSeconds > 10_000_000_000 ? resetSeconds : resetSeconds * 1000).toISOString();
+  const durationMins = number(raw.windowDurationMins);
+  const label = durationMins === 300
+    ? "5-hour"
+    : durationMins === 10080
+      ? "weekly"
+      : fallback;
   return { label, remainingPercent: 100 - used, resetAt };
 }
 
