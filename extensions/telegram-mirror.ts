@@ -40,6 +40,7 @@ import { basename, dirname, join } from "node:path";
 import { getSettingsListTheme, type ExtensionAPI, type ExtensionContext }
   from "@earendil-works/pi-coding-agent";
 import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
+import { sendTelegramDelivery, type QueuedImage } from "./telegram-delivery.ts";
 
 type BotFrame = {
   t?: string;
@@ -52,7 +53,6 @@ type BotFrame = {
   voice?: unknown;
 };
 
-type QueuedImage = { data: string; mime: string };
 type MigrationVoice = { path: string };
 
 type AssistantPart = { type?: unknown; text?: unknown };
@@ -536,15 +536,12 @@ export default function (pi: ExtensionAPI) {
   // receives exactly what pasting it into the terminal would send.
   function queueDelivery(id: string, text: string, image?: QueuedImage): void {
     deliveries = deliveries.then(async () => {
-      if (image) {
-        const content = [
-          { type: "text", text: text.trim() ? `${text}\n\n${IMAGE_MARKER}` : IMAGE_MARKER },
-          { type: "image", data: image.data, mimeType: image.mime },
-        ];
-        await pi.sendUserMessage(content as never, { deliverAs: "steer" });
-      } else {
-        await pi.sendUserMessage(text, { deliverAs: "steer" });
-      }
+      await sendTelegramDelivery(
+        (content, options) => pi.sendUserMessage(content as never, options),
+        activeCtx?.isIdle === true,
+        text,
+        image,
+      );
       write({ t: "accepted", id });
     }).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);

@@ -45,7 +45,9 @@ def roots(): return [str(Path(x).expanduser().resolve(strict=False)) for x in co
 def identity(pid):
     try:
         if sys.platform == "darwin":
-            out=subprocess.check_output(["ps","-o","lstart=","-p",str(pid)], text=True, stderr=subprocess.DEVNULL).strip()
+            out=subprocess.check_output(["ps","-o","lstart=","-p",str(pid)], text=True,
+                                         stderr=subprocess.DEVNULL,
+                                         env={**os.environ, "LC_ALL": "C"}).strip()
             return out
         raw=Path(f"/proc/{pid}/stat").read_text(); tail=raw[raw.rfind(")")+2:].split(); return tail[19]
     except (OSError, subprocess.SubprocessError, IndexError): return ""
