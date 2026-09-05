@@ -414,7 +414,10 @@ export default function (pi: ExtensionAPI) {
     const frameBytes = Buffer.byteLength(payload);
     if (frameBytes > MAX_FRAME_BYTES ||
         frameBytes > MAX_OUTSTANDING_IMAGE_WRITE_BYTES ||
-        outstandingImageWriteBytes + frameBytes > MAX_OUTSTANDING_IMAGE_WRITE_BYTES) return false;
+        outstandingImageWriteBytes + frameBytes > MAX_OUTSTANDING_IMAGE_WRITE_BYTES) {
+      activeCtx?.ui.notify("Telegram mirror refused an oversized frame.", "warning");
+      return false;
+    }
     outstandingImageWriteBytes += frameBytes;
     try {
       target.write(payload, () => {
