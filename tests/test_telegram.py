@@ -49,7 +49,7 @@ def test_macos_identity_is_locale_stable(monkeypatch):
     monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
     second = owner.identity(123)
 
-    assert first == second == "Sat Sep 5 11:24:11 2026"
+    assert first == second == "Sat Sep  5 11:24:11 2026"
     assert len(calls) == 2
     assert all(env["LC_ALL"] == env["LANG"] == "C" for env in calls)
 

@@ -50,7 +50,7 @@ def identity(pid):
             env = {**os.environ, "LC_ALL": "C", "LANG": "C"}
             out=subprocess.check_output(["ps","-o","lstart=","-p",str(pid)], env=env,
                                         text=True, stderr=subprocess.DEVNULL)
-            return " ".join(out.split())
+            return out.strip()
         raw=Path(f"/proc/{pid}/stat").read_text(); tail=raw[raw.rfind(")")+2:].split(); return tail[19]
     except (OSError, subprocess.SubprocessError, IndexError): return ""
 def process_state(pid):
