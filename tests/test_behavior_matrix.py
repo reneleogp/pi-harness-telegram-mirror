@@ -40,13 +40,15 @@ def test_ineligible_session_cannot_create_ownership_record(tmp_path):
     assert not (home / "session.json").exists()
 
 
-def test_non_macos_service_request_fails_without_side_effect(tmp_path):
-    if sys.platform == "darwin":
-        return
+def test_service_unit_is_platform_native_and_secret_free(tmp_path):
     env = {**os.environ, "PI_TELEGRAM_DIR": str(tmp_path / "home")}
     result = subprocess.run([sys.executable, str(BOT), "service-unit"], env=env, capture_output=True, text=True)
-    assert result.returncode != 0
-    assert "macOS only" in result.stderr
+    if sys.platform in ("darwin", "linux"):
+        assert result.returncode == 0
+        assert "TELEGRAM_BOT_TOKEN" not in result.stdout
+        assert ("<plist" in result.stdout) if sys.platform == "darwin" else ("[Service]" in result.stdout)
+    else:
+        assert result.returncode != 0
 
 
 def test_rejected_delivery_retries_once_then_reports_drop():

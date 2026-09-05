@@ -122,6 +122,7 @@ except ImportError:  # pragma: no cover - exercised by its own regression
 SERVICE_NAME = "pi-telegram.service"
 MAC_SERVICE_LABEL = "com.pi.telegram"
 MAC_SERVICE_NAME = f"{MAC_SERVICE_LABEL}.plist"
+SYSTEMD_SERVICE_NAME = SERVICE_NAME
 DEFAULT_API_BASE = "https://api.telegram.org"
 DEFAULT_TRANSCRIBE_COMMAND = "parakeet-tdt-0.6b-v3"
 MACOS_TRANSCRIBE_ADAPTER = str(Path(__file__).resolve().with_name("pi-parakeet-mlx-transcribe.py"))
@@ -389,7 +390,7 @@ class TelegramApi:
     def _multipart_sync(self, method: str, fields: dict[str, str],
                         files: list[tuple[str, str, bytes]], timeout: float) -> Any:
         """Upload real media: the Bot API takes bytes only as multipart."""
-        boundary = f"----fm{secrets.token_hex(16)}"
+        boundary = f"----pi-telegram-{secrets.token_hex(16)}"
         body = bytearray()
         for name, value in fields.items():
             body += f"--{boundary}\r\n".encode()
@@ -1903,31 +1904,49 @@ def on_macos() -> bool:
     return platform.system() == "Darwin"
 
 
+def on_linux() -> bool:
+    return platform.system() == "Linux"
+
+
 def unit_path() -> Path:
-    return Path.home() / "Library" / "LaunchAgents" / MAC_SERVICE_NAME
+    if on_macos():
+        return Path.home() / "Library" / "LaunchAgents" / MAC_SERVICE_NAME
+    return Path.home() / ".config" / "systemd" / "user" / SYSTEMD_SERVICE_NAME
 
 
 def unit_text(home: Path) -> str:
     script = Path(__file__).resolve()
-    if not on_macos():
-        raise TelegramError("the Telegram mirror service supports macOS only")
-    return plistlib.dumps({
-        "Label": MAC_SERVICE_LABEL,
-        "ProgramArguments": [sys.executable, str(script), "run"],
-        "EnvironmentVariables": {
-            "PI_TELEGRAM_DIR": str(home),
-            "PATH": (str(Path.home() / ".local" / "bin")
-                     + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"),
-        },
-        "RunAtLoad": True,
-        "KeepAlive": True,
-        "ProcessType": "Interactive",
-    }, sort_keys=False).decode("utf-8")
+    if on_macos():
+        return plistlib.dumps({
+            "Label": MAC_SERVICE_LABEL,
+            "ProgramArguments": [sys.executable, str(script), "run"],
+            "EnvironmentVariables": {
+                "PI_TELEGRAM_DIR": str(home),
+                "PATH": (str(Path.home() / ".local" / "bin")
+                         + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"),
+            },
+            "RunAtLoad": True,
+            "KeepAlive": True,
+            "ProcessType": "Interactive",
+        }, sort_keys=False).decode("utf-8")
+    if on_linux():
+        return ("[Unit]\\nDescription=Pi Telegram mirror\\nAfter=network-online.target\\n\\n"
+                "[Service]\\nType=simple\\n"
+                f"ExecStart={shlex.join([sys.executable, str(script), 'run'])}\\n"
+                f"Environment=PI_TELEGRAM_DIR={home}\\n"
+                "Restart=on-failure\\nRestartSec=3\\n\\n"
+                "[Install]\\nWantedBy=default.target\\n")
+    raise TelegramError("the Telegram mirror service supports Linux and macOS")
 
 
 def require_service_platform() -> None:
-    if not on_macos():
-        raise TelegramError("the Telegram mirror service supports macOS only")
+    if not (on_macos() or on_linux()):
+        raise TelegramError("the Telegram mirror service supports Linux and macOS")
+
+
+def systemctl(*arguments: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["systemctl", "--user", *arguments], stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, text=True, check=False)
 
 
 def launchctl(*arguments: str) -> subprocess.CompletedProcess:
@@ -1944,6 +1963,15 @@ def install_service(home: Path) -> int:
     target = unit_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     write_private_file(target, unit_text(home))
+    if on_linux():
+        result = systemctl("daemon-reload")
+        if result.returncode != 0:
+            raise TelegramError(f"systemctl daemon-reload failed: {result.stdout.strip()}")
+        result = systemctl("enable", "--now", SYSTEMD_SERVICE_NAME)
+        if result.returncode != 0:
+            raise TelegramError(f"systemctl enable failed: {result.stdout.strip()}")
+        print(f"installed {target} and started {SYSTEMD_SERVICE_NAME}")
+        return 0
     result = launchctl("bootout", mac_service_target())
     if result.returncode != 0 and not any(
             phrase in result.stdout.lower()
@@ -1963,6 +1991,14 @@ def install_service(home: Path) -> int:
 def uninstall_service() -> int:
     require_service_platform()
     target = unit_path()
+    if on_linux():
+        result = systemctl("disable", "--now", SYSTEMD_SERVICE_NAME)
+        if result.returncode != 0 and "not loaded" not in result.stdout.lower():
+            raise TelegramError(f"systemctl disable failed: {result.stdout.strip()}")
+        remove_file(target)
+        systemctl("daemon-reload")
+        print(f"removed {target}")
+        return 0
     result = launchctl("bootout", mac_service_target())
     if result.returncode != 0 and not any(
             phrase in result.stdout.lower()
@@ -2056,6 +2092,9 @@ def status(home: Path) -> int:
     if on_macos():
         result = launchctl("print", mac_service_target())
         print(f"service: {'active' if result.returncode == 0 else 'inactive'}")
+    elif on_linux():
+        result = systemctl("is-active", SYSTEMD_SERVICE_NAME)
+        print(f"service: {'active' if result.returncode == 0 else 'inactive'}")
     else:
         print("service: unsupported on this platform")
     return 0
@@ -2074,7 +2113,7 @@ def run(home: Path) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="pi-telegram.py",
-        description="Pi's Telegram terminal mirror bot (macOS only).",
+        description="Pi's Telegram terminal mirror bot (Linux/macOS).",
         epilog=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

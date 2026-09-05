@@ -5,12 +5,12 @@ Standalone bidirectional Telegram mirror for one Pi terminal session. Review ext
 ## Install
 
 ```sh
-pi install git:github.com/reneleogp/pi-harness-telegram-mirror@c8b64eed508ad9d6423e9a52c9cd5327c3378b1d
-pi update git:github.com/reneleogp/pi-harness-telegram-mirror@c8b64eed508ad9d6423e9a52c9cd5327c3378b1d
+pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1
+pi update git:github.com/reneleogp/pi-harness-telegram-mirror@v1
 pi remove git:github.com/reneleogp/pi-harness-telegram-mirror
 ```
 
-The install command uses an immutable release commit; update it only when intentionally selecting a different reviewed commit.
+The install command uses an immutable release commit; update it only when intentionally selecting a different reviewed commit. The published `v1` tag is the stable install target.
 
 `package.json` is a Pi manifest (`pi-package`) and loads `extensions/telegram-mirror.ts`. Python runs from this stable installed package location and uses the standard library; `mistune` is optional for formatting.
 
@@ -32,7 +32,7 @@ Pairing stores only one private sender/chat in owner-only `config.json`. Never p
 
 `allow-root` records the exact canonical root. A session claims the mirror only when exact `ctx.cwd` matches a registered root; subdirectories and worktrees do not match. An owner-only atomic session record contains PID, UID, process-start identity, root, and random incarnation. Dead/reused records are safely reclaimable. The bot validates kernel identity, never client claims: Linux `SO_PEERCRED`; macOS kernel peer PID and `getpeereid` UID. A second session or unrelated session is refused and an ineligible session stays inert. Kernel peer credentials protect the bot boundary; a same-UID process that can execute the local helper is trusted by the ownership handoff.
 
-State, token, config, socket, ownership, and audio are under `~/.pi-telegram`, so macOS LaunchAgent execution never needs project-folder privacy permission. Files/config are 0600 and the directory is 0700.
+State, token, config, socket, ownership, and audio are under `~/.pi-telegram`, so service execution never needs project-folder privacy permission. Files/config are 0600 and the directory is 0700.
 
 ## Service
 
@@ -43,7 +43,7 @@ python3 /installed/package/bin/pi-telegram.py status
 python3 /installed/package/bin/pi-telegram.py uninstall-service
 ```
 
-macOS is the only supported, tested, and managed-service platform. macOS uses `~/Library/LaunchAgents/com.pi.telegram.plist`; service commands reject other platforms clearly. Direct `run` and other portable paths are best-effort and unsupported elsewhere; there is no Linux service infrastructure. The LaunchAgent contains only the stable script path and private directory, never the token. Install, status, and uninstall are idempotent.
+Linux systemd user services and macOS LaunchAgents are supported. Linux uses `~/.config/systemd/user/pi-telegram.service`; macOS uses `~/Library/LaunchAgents/com.pi.telegram.plist`. Both contain only the stable script path and private directory, never the token. Install, status, and uninstall are idempotent.
 
 ## Behavior and Pi commands
 
@@ -72,7 +72,7 @@ After installing and connecting Pi, run:
 python3 /installed/package/bin/pi-telegram.py migrate
 ```
 
-It validates and copies token, pairing, and settings from legacy `~/.firstmate-telegram` into `~/.pi-telegram` without printing secrets or deleting or mutating the old directory. Retry is idempotent. After installation, the operator must perform one real text, image, and voice smoke test through Pi before retiring the legacy setup. The legacy path exists only in this explicit migration operation, not normal runtime.
+It validates and copies token, pairing, and settings from the legacy configuration into `~/.pi-telegram` without printing secrets or deleting or mutating the old directory. Retry is idempotent. After installation, the operator must perform one real text, image, and voice smoke test through Pi before retiring the legacy setup. The legacy path exists only in this explicit migration operation, not normal runtime.
 
 ## Troubleshooting, privacy, limitations
 
