@@ -188,8 +188,8 @@ A message typed in Telegram is already visible there, so it is not echoed back a
 
 ## Sending to Pi
 
-Telegram text enters an in-memory FIFO in arrival order and is submitted through Pi's normal user input.
-Messages sent back-to-back while Pi is working steer the run exactly like typing them in the terminal, so Pi keeps its own batching and continuation behavior.
+Telegram text and images enter an in-memory FIFO in arrival order and are submitted through Pi's normal user input.
+When Pi is idle, each message starts a new Pi turn without steering options; while Pi is working, messages steer the run exactly like typing them in the terminal, so Pi keeps its own batching and continuation behavior.
 When Pi accepts a message, `Pi · Sent to Pi.` replies to that exact message; that means Pi accepted the input, not that Pi finished answering.
 That receipt can be switched off (see Delivery confirmations).
 
