@@ -168,7 +168,7 @@ const MAX_OUTSTANDING_IMAGE_WRITE_BYTES = positiveInteger(
   "PI_TELEGRAM_MAX_OUTSTANDING_WRITE_BYTES",
   Math.ceil(MAX_CLIPBOARD_TOTAL_BYTES / 3) * 4 + 3 * 1024 * 1024,
 );
-const MAX_FRAME_BYTES = positiveInteger("PI_TELEGRAM_MAX_FRAME_BYTES", 8 * 1024 * 1024);
+const MAX_FRAME_BYTES = positiveInteger("PI_TELEGRAM_MAX_FRAME_BYTES", 18 * 1024 * 1024);
 
 function imageMimeFromMagic(bytes: Buffer): string | undefined {
   if (bytes.length >= 8 && bytes.subarray(0, 8).equals(
