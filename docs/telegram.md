@@ -1,8 +1,8 @@
-# Telegram terminal mirror (WSL and macOS)
+# Telegram terminal mirror (macOS)
 
 The Telegram mirror puts the one Pi terminal conversation on your phone, in both directions.
-It is a private Python bot (`${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py`) running as a WSL systemd user service or a macOS LaunchAgent beside the installed Pi package extension (`extensions/telegram-mirror.ts`).
-The bot supports Linux/WSL and macOS hosts only.
+It is a private Python bot (`${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py`) running as a macOS LaunchAgent beside the installed Pi package extension (`extensions/telegram-mirror.ts`).
+The bot supports macOS hosts only; service commands reject other platforms clearly.
 
 Telegram text reaches Pi exactly as terminal text: no origin marker, no hidden provenance, and no Telegram-specific instruction.
 Telegram input therefore carries the same authority as anything typed in the terminal, so pair only your own account.
@@ -54,10 +54,9 @@ The command fails if the package is not installed; no repository checkout is nee
    ```
 
    Do not configure a Hugging Face token for the bot or service.
-   WSL keeps the compatible `parakeet-tdt-0.6b-v3` `transcribe_command` behavior, and a custom `transcribe_command` remains supported on either platform.
+   A custom `transcribe_command` remains supported for local adapters.
 
 5. Install the optional Markdown parser used to format Pi's replies.
-   On WSL, run `sudo apt install python3-mistune`.
    On macOS, install `mistune` into the Python environment that runs the bot, for example `python3 -m pip install mistune`.
    Without it the mirror still works and simply sends every reply as plain text.
 
@@ -68,12 +67,10 @@ The command fails if the package is not installed; no repository checkout is nee
    ${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py status
    ```
 
-   On WSL this writes `~/.config/systemd/user/pi-telegram.service`.
-   Run `loginctl enable-linger "$USER"` if you want it to survive after your last WSL shell closes.
    On macOS this writes `~/Library/LaunchAgents/com.pi.telegram.plist` and starts it with `launchctl` in your GUI user domain.
    A LaunchAgent may be denied access when the repository is under a privacy-protected Documents location; use a normal development directory or the documented foreground process rather than granting broad access silently.
    The plist contains only the private directory and Pi home paths, never the Telegram token.
-   `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py service-unit` prints the current platform's unit without installing it.
+   `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py service-unit` prints the macOS LaunchAgent plist without installing it.
    `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py uninstall-service` stops and removes the service and is safe to repeat.
    After changing the script or extension, run `uninstall-service` followed by `install-service` to restart the service.
 
@@ -257,7 +254,7 @@ Every button action is bound to the current transcript revision, so a stale or r
 - Only the paired chat can send images, and the primary-session rule covers them: a worker session can neither receive nor deliver one.
 - The bot owns mirror mode and delivery confirmations for both surfaces; the terminal only shows and changes what the bot publishes.
 - Stopping or restarting the service is bounded: a running transcription and everything it started are ended, the connected terminal session is released, and the bot exits rather than waiting on work it cannot interrupt.
-  The WSL systemd unit sets `TimeoutStopSec=20` to match; macOS uses the owner-scoped LaunchAgent lifecycle.
+  macOS uses the owner-scoped LaunchAgent lifecycle.
 - At most 32 untouched voice transcripts are kept; older ones are dropped with their temporary audio, so cards you never answer cannot pile up.
 - Transport statuses stay attached to the exact message they describe, while Pi's replies are never threaded (see Reply threading).
 - The service unit holds no token and no message content; the token stays in `~/.pi-telegram/env` and pairing stays in `config.json`.

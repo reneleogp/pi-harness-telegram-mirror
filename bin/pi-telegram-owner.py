@@ -97,10 +97,58 @@ def release(token):
     try:
         if guard_owned(token): GUARD.unlink()
     except OSError: pass
+def configured_executable():
+    value = config().get("pi_executable") or os.environ.get("PI_TELEGRAM_PI_EXECUTABLE") or "pi"
+    return str(value)
+
+def process_parent(pid):
+    try:
+        if sys.platform == "darwin":
+            return int(subprocess.check_output(["ps", "-o", "ppid=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL).strip())
+        raw = Path(f"/proc/{pid}/stat").read_text()
+        return int(raw[raw.rfind(")") + 2:].split()[1])
+    except (OSError, ValueError, subprocess.SubprocessError, IndexError):
+        return 0
+
+def process_executable(pid):
+    try:
+        if sys.platform == "darwin":
+            return subprocess.check_output(["ps", "-o", "comm=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL).strip()
+        return os.path.realpath(f"/proc/{pid}/exe")
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+def process_command(pid):
+    try:
+        if sys.platform == "darwin":
+            return subprocess.check_output(["ps", "-o", "command=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL).strip()
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\\x00", b" ").decode(errors="replace")
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+def matches_executable(pid, expected):
+    executable = process_executable(pid)
+    target = Path(expected).expanduser()
+    if target.is_absolute():
+        return executable == os.path.realpath(str(target))
+    name = target.name
+    return Path(executable).name == name or any(Path(part).name == name for part in process_command(pid).split())
+
+def has_pi_ancestor(pid):
+    expected = configured_executable()
+    seen = set()
+    for _ in range(32):
+        if pid <= 1 or pid in seen: return False
+        seen.add(pid)
+        if matches_executable(pid, expected): return True
+        pid = process_parent(pid)
+    return False
+
 def is_requester(pid):
     if pid != os.getppid(): return False
     try:
-        return getattr(os, "getuid", lambda: -1)() >= 0 and identity(pid) != ""
+        return (getattr(os, "getuid", lambda: -1)() >= 0 and
+                identity(pid) != "" and has_pi_ancestor(pid))
     except OSError:
         return False
 
