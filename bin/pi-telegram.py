@@ -809,10 +809,11 @@ class MirrorBot:
             frame: dict[str, Any] = {"t": "deliver", "id": item.id, "text": item.text}
             if item.image:
                 frame["image"] = item.image
-            if not await self.write_frame(frame):
-                self.queue.appendleft(item)
-                return
             self.pending[item.id] = item
+            if not await self.write_frame(frame):
+                if self.pending.pop(item.id, None) is not None:
+                    self.queue.appendleft(item)
+                return
 
     async def on_accepted(self, message_id: str) -> None:
         item = self.pending.pop(message_id, None)
@@ -1877,6 +1878,7 @@ def run_transcribe(command: str, audio: Path, register: Optional[Any] = None) ->
             # those children alive holding this pipe open.
             start_new_session=True,
         )
+        process._pi_process_group = os.getpgid(process.pid)
     except (OSError, ValueError) as exc:
         raise TelegramError(f"transcription command failed: {exc}") from exc
     # Published before the wait so a stopping bot can end this child instead of
@@ -1919,31 +1921,35 @@ def run_transcribe(command: str, audio: Path, register: Optional[Any] = None) ->
 
 def end_process_group(process: Any) -> None:
     """Stop a transcriber and everything it started, then stop waiting."""
-    for signal_name in (signal.SIGTERM, signal.SIGKILL):
-        if process.poll() is not None:
-            return
+    try:
+        group = getattr(process, "_pi_process_group", None) or os.getpgid(process.pid)
+    except (OSError, ProcessLookupError, AttributeError):
+        group = None
+    if group is not None and group != os.getpgrp():
         try:
-            group = os.getpgid(process.pid)
+            os.killpg(group, signal.SIGTERM)
         except (OSError, ProcessLookupError):
-            group = None
-        # Only ever signal a group the child leads. A transcriber that failed to
-        # get its own session shares ours, and signalling that group would take
-        # down this service with it.
-        if group is not None and group != os.getpgrp():
-            try:
-                os.killpg(group, signal_name)
-            except (OSError, ProcessLookupError):
-                pass
-        else:
-            try:
-                process.send_signal(signal_name)
-            except (OSError, ValueError, ProcessLookupError):
-                return
+            pass
         try:
             process.wait(timeout=TRANSCRIBE_STOP_GRACE)
-            return
         except subprocess.TimeoutExpired:
-            continue
+            pass
+        try:
+            os.killpg(group, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+        return
+    try:
+        process.send_signal(signal.SIGTERM)
+    except (OSError, ValueError, ProcessLookupError):
+        return
+    try:
+        process.wait(timeout=TRANSCRIBE_STOP_GRACE)
+    except subprocess.TimeoutExpired:
+        try:
+            process.send_signal(signal.SIGKILL)
+        except (OSError, ValueError, ProcessLookupError):
+            pass
 
 
 async def transcribe(command: str, audio: Path, register: Optional[Any] = None) -> str:
