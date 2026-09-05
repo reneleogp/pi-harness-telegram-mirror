@@ -24,10 +24,13 @@ import {
   constants as fsConstants,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   readSync,
+  renameSync,
+  fsyncSync,
   writeFileSync,
 } from "node:fs";
 import { connect, type Socket } from "node:net";
@@ -117,8 +120,19 @@ function readDisplayStatus(): boolean {
 function writeDisplayStatus(shown: boolean): void {
   try {
     const home = botHome();
+    if (existsSync(home) && lstatSync(home).isSymbolicLink()) throw new Error("state directory is a symlink");
     if (!existsSync(home)) mkdirSync(home, { recursive: true, mode: 0o700 });
-    writeFileSync(join(home, DISPLAY_SETTING_FILE), shown ? "on\n" : "off\n", { mode: 0o600 });
+    const target = join(home, DISPLAY_SETTING_FILE);
+    if (existsSync(target) && lstatSync(target).isSymbolicLink()) throw new Error("state file is a symlink");
+    const temporary = join(home, `.${DISPLAY_SETTING_FILE}.${process.pid}.${Date.now()}`);
+    const fd = openSync(temporary, "wx", 0o600);
+    try {
+      writeFileSync(fd, shown ? "on\n" : "off\n");
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(temporary, target);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error(`pi-telegram-mirror: could not persist the status display choice: ${detail}`);

@@ -1,5 +1,6 @@
 import asyncio
 import importlib.util
+import http.server
 import json
 import os
 import subprocess
@@ -78,6 +79,16 @@ def test_env_requires_private_regular_file(tmp_path):
     secret.write_text("TELEGRAM_BOT_TOKEN=secret\n")
     env.symlink_to(secret)
     assert bot.read_env(home) == {}
+    redirected = tmp_path / "redirected"
+    redirected.mkdir()
+    state = tmp_path / "state"
+    state.symlink_to(redirected, target_is_directory=True)
+    try:
+        bot.private_dir(state)
+    except bot.TelegramError:
+        pass
+    else:
+        raise AssertionError("symlinked state directory was accepted")
 
 
 def test_environment_token_is_not_an_authorized_source(tmp_path, monkeypatch):
@@ -131,6 +142,34 @@ def test_kernel_peer_credentials_are_observed():
     finally:
         left.close()
         right.close()
+
+
+def test_fake_telegram_transport_executes_api_request():
+    bot = load_bot()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers["Content-Length"])
+            json.loads(self.rfile.read(length))
+            body = b'{"ok":true,"result":{"accepted":true}}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *_args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = __import__("threading").Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        api = bot.TelegramApi(f"http://127.0.0.1:{server.server_port}", "token")
+        assert api.request_sync("getMe", {"x": 1}) == {"accepted": True}
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
 
 
 def test_service_definition_contains_runtime_path(tmp_path):
