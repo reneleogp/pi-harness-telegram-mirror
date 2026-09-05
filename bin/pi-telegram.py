@@ -1041,10 +1041,8 @@ class MirrorBot:
                 try:
                     line = await reader.readline()
                 except (ValueError, asyncio.LimitOverrunError):
-                    # A frame past the bound is refused without tearing the
-                    # session down for every later message.
-                    log("ignored an oversized frame from the Pi session")
-                    continue
+                    log("closed the Pi session after an oversized frame")
+                    break
                 if not line:
                     break
                 try:
@@ -1610,7 +1608,7 @@ def peer_credentials(writer: asyncio.StreamWriter) -> Optional[tuple[int, int]]:
         credentials = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
                                       struct.calcsize("3i"))
         pid, uid, _gid = struct.unpack("3i", credentials)
-    except (OSError, AttributeError, struct.error, ctypes.error):
+    except (OSError, AttributeError, struct.error):
         return None
     return pid, uid
 
@@ -1982,7 +1980,7 @@ def migrate(home: Path) -> int:
     if not token or not isinstance(data.get("user_id"), int) or not isinstance(data.get("chat_id"), int):
         raise TelegramError("legacy configuration failed validation; nothing was changed")
     private_dir(home)
-    env_file(home).write_text("TELEGRAM_BOT_TOKEN=" + token + "\\n", encoding="utf-8")
+    env_file(home).write_text("TELEGRAM_BOT_TOKEN=" + token + "\n", encoding="utf-8")
     env_file(home).chmod(0o600)
     write_config(home, data)
     print("migration copied and validated; legacy configuration was not changed")

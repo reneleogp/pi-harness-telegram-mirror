@@ -45,14 +45,17 @@ def acquire_guard():
 def release():
     try: GUARD.unlink()
     except OSError: pass
-def claim(cwd):
+def claim(cwd, owner_pid=None):
     secure(); root=str(Path(cwd).resolve(strict=True))
     if root not in roots(): return 1
     if not acquire_guard(): return 1
     try:
+        pid = os.getpid() if owner_pid is None else int(owner_pid)
+        uid = getattr(os, "getuid", lambda: -1)()
         old=read_record()
-        if old and alive(old) and not (int(old.get("pid",-1))==os.getpid() and old.get("root")==root): return 1
-        record={"pid":os.getpid(),"uid":getattr(os,"getuid",lambda:-1)(),"start":identity(os.getpid()),"root":root,"incarnation":secrets.token_hex(16)}
+        if old and alive(old) and not (int(old.get("pid",-1))==pid and old.get("root")==root): return 1
+        if pid <= 0 or identity(pid) == "": return 1
+        record={"pid":pid,"uid":uid,"start":identity(pid),"root":root,"incarnation":secrets.token_hex(16)}
         tmp=RECORD.with_name(".session.tmp.%s"%secrets.token_hex(8)); tmp.write_text(json.dumps(record)+"\n"); tmp.chmod(0o600); os.replace(tmp,RECORD); return 0
     finally: release()
 def check(cwd):
@@ -62,7 +65,9 @@ def check_peer(pid,uid):
     r=read_record(); return 0 if r and alive(r) and int(r["pid"])==pid and int(r["uid"])==uid else 1
 def main():
     p=argparse.ArgumentParser(); sub=p.add_subparsers(dest="cmd",required=True)
-    for n in ("claim","check"): q=sub.add_parser(n); q.add_argument("cwd")
+    for n in ("claim","check"):
+        q=sub.add_parser(n); q.add_argument("cwd")
+        if n == "claim": q.add_argument("pid", nargs="?", type=int)
     q=sub.add_parser("allow-root"); q.add_argument("root")
     q=sub.add_parser("check-peer"); q.add_argument("pid",type=int); q.add_argument("uid",type=int)
     a=p.parse_args(); secure()
@@ -70,5 +75,5 @@ def main():
         root=str(Path(a.root).expanduser().resolve(strict=True)); d=config(); rs=roots();
         if root not in rs: rs.append(root)
         d["allowed_roots"]=rs; CONFIG.write_text(json.dumps(d,indent=2)+"\n"); CONFIG.chmod(0o600); return 0
-    return {"claim":claim,"check":check}[a.cmd](a.cwd) if a.cmd in ("claim","check") else check_peer(a.pid,a.uid)
+    return claim(a.cwd, a.pid) if a.cmd == "claim" else check(a.cwd) if a.cmd == "check" else check_peer(a.pid,a.uid)
 if __name__=="__main__": sys.exit(main())

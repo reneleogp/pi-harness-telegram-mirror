@@ -18,6 +18,7 @@
 // extension is the client, because the bot outlives every Pi session. The wire
 // protocol is stated once in that script's header.
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import {
   closeSync,
   constants as fsConstants,
@@ -101,7 +102,7 @@ function ownerHelper(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "../bin/pi-telegram-owner.py");
 }
 function claim(cwd: string): boolean {
-  const result = spawnSync("python3", [ownerHelper(), "claim", cwd], { stdio: "ignore", timeout: 2000 });
+  const result = spawnSync("python3", [ownerHelper(), "claim", cwd, String(process.pid)], { stdio: "ignore", timeout: 2000 });
   return result.status === 0;
 }
 
