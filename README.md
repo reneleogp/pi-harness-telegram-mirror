@@ -43,7 +43,7 @@ python3 /installed/package/bin/pi-telegram.py status
 python3 /installed/package/bin/pi-telegram.py uninstall-service
 ```
 
-Linux/WSL uses a systemd user service; macOS uses `~/Library/LaunchAgents/com.pi.telegram.plist`. Units contain only the stable script path and private directory, never the token. Install, status, and uninstall are idempotent.
+macOS uses `~/Library/LaunchAgents/com.pi.telegram.plist`; service commands reject other platforms clearly. The LaunchAgent contains only the stable script path and private directory, never the token. Install, status, and uninstall are idempotent.
 
 ## Behavior and Pi commands
 
@@ -62,7 +62,7 @@ python3 /installed/package/bin/pi-parakeet-mlx-transcribe.py --help
 # prewarm by transcribing a short local sample before going live
 ```
 
-The adapter uses public `mlx-community/parakeet-tdt-0.6b-v3`, no cloud or required Hugging Face token, private temporary output, transcript-only stdout, bounded diagnostics, process-group termination, and cleanup. Linux may use a local `transcribe_command` with `{audio}`; cloud transcription is not required.
+The adapter uses public `mlx-community/parakeet-tdt-0.6b-v3`, no cloud or required Hugging Face token, private temporary output, transcript-only stdout, bounded diagnostics, process-group termination, and cleanup. Cloud transcription is not required.
 
 ## Migration
 

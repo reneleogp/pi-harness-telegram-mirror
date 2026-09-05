@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""pi-telegram.py - Pi's Telegram terminal mirror bot (WSL and macOS).
+"""pi-telegram.py - Pi's Telegram terminal mirror bot (macOS).
 
 One private Telegram bot that mirrors the one Pi terminal conversation
-in both directions. It runs beside Pi as a WSL systemd user service or a macOS
-LaunchAgent and talks to the installed Pi package extension over one local Unix
-socket. The bot contains no model, agent loop, or Pi reasoning.
+in both directions. It runs beside Pi as a macOS LaunchAgent and talks to the
+installed Pi package extension over one local Unix socket. The bot contains no
+model, agent loop, or Pi reasoning.
 
 Layout (one private directory, owner-only, default ~/.pi-telegram,
 overridden by PI_TELEGRAM_DIR):
@@ -30,6 +30,7 @@ Wire protocol (newline-delimited JSON, both directions):
                     {"t":"command","id":N,"command":"toggle"|"on"|"off"|"status"}
                     {"t":"set","setting":"confirmations","value":bool}
                     {"t":"accepted","id":"..."}     Pi accepted that message
+                    {"t":"rejected","id":"..."}     Pi could not accept it
   bot -> extension  {"t":"deliver","id":"...","text":...,"image":{...}}
                     {"t":"command_result","id":N|null,"text":...}
                     {"t":"state","mirror":bool,"confirmations":bool}
@@ -73,14 +74,13 @@ Usage:
   pi-telegram.py run                run the bot in the foreground (the service)
   pi-telegram.py pair               record the first private sender as the pair
   pi-telegram.py status             print pairing, service, and socket status
-  pi-telegram.py service-unit       print the systemd unit or LaunchAgent plist
-  pi-telegram.py install-service    install and start the WSL or macOS user service
+  pi-telegram.py service-unit       print the macOS LaunchAgent plist
+  pi-telegram.py install-service    install and start the macOS user service
   pi-telegram.py uninstall-service  stop and remove that user service
 
 Environment:
   PI_TELEGRAM_DIR        private directory (default ~/.pi-telegram)
   PI_TELEGRAM_API_BASE   Telegram API base URL (tests point this at a fake)
-  PI_TELEGRAM_ASSUME_WSL 1 or 0 to force the WSL verdict for service commands
 """
 
 from __future__ import annotations
@@ -128,14 +128,15 @@ MACOS_TRANSCRIBE_ADAPTER = str(Path(__file__).resolve().with_name("pi-parakeet-m
 
 
 def default_transcribe_command() -> str:
-    """Use the owned MLX adapter on macOS; retain the historical WSL default."""
-    if platform.system() == "Darwin" and not os.environ.get("WSL_DISTRO_NAME"):
+    """Use the package-owned MLX adapter on macOS."""
+    if platform.system() == "Darwin":
         return MACOS_TRANSCRIBE_ADAPTER
     return DEFAULT_TRANSCRIBE_COMMAND
 
 MIRROR_OFF_REPLY = "Telegram mirror is off. Send /telegram_on to enable it."
 OFFLINE_REPLY = "Pi is not running. Your message is queued until it starts."
 ACCEPTED_REPLY = "Pi · Sent to Pi."
+DELIVERY_RETRY_REPLY = "Pi could not accept that message; it remains queued for retry."
 TRANSCRIBING_REPLY = "Transcribing…"
 TERMINAL_LABEL = "You · Terminal"
 SENT_FOOTER = "Sent to Pi"
@@ -807,6 +808,13 @@ class MirrorBot:
             return
         await self.send(ACCEPTED_REPLY, reply_to=item.reply_to)
 
+    async def on_rejected(self, message_id: str) -> None:
+        item = self.pending.pop(message_id, None)
+        if item is None:
+            return
+        self.queue.appendleft(item)
+        await self.send(DELIVERY_RETRY_REPLY, reply_to=item.reply_to)
+
     # --- voice ---
 
     def transcription_finished(self, task: asyncio.Task[Any]) -> None:
@@ -1113,6 +1121,9 @@ class MirrorBot:
             return
         if kind == "accepted":
             await self.on_accepted(str(frame.get("id")))
+            return
+        if kind == "rejected":
+            await self.on_rejected(str(frame.get("id")))
             return
         if kind == "migration_ack":
             nonce = frame.get("nonce")
@@ -1891,74 +1902,35 @@ async def transcribe(command: str, audio: Path, register: Optional[Any] = None) 
 # --- service and CLI --------------------------------------------------------
 
 
-def is_wsl() -> bool:
-    assume = os.environ.get("PI_TELEGRAM_ASSUME_WSL")
-    if assume in ("0", "1"):
-        return assume == "1"
-    if os.environ.get("WSL_DISTRO_NAME"):
-        return True
-    try:
-        return "microsoft" in Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8").lower()
-    except OSError:
-        return False
-
-
 def on_macos() -> bool:
     return platform.system() == "Darwin"
 
 
 def unit_path() -> Path:
-    if on_macos():
-        return Path.home() / "Library" / "LaunchAgents" / MAC_SERVICE_NAME
-    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / "systemd" / "user" / SERVICE_NAME
+    return Path.home() / "Library" / "LaunchAgents" / MAC_SERVICE_NAME
 
 
 def unit_text(home: Path) -> str:
     script = Path(__file__).resolve()
-    if on_macos():
-        return plistlib.dumps({
-            "Label": MAC_SERVICE_LABEL,
-            "ProgramArguments": [sys.executable, str(script), "run"],
-            "EnvironmentVariables": {
-                "PI_TELEGRAM_DIR": str(home),
-                "PATH": (str(Path.home() / ".local" / "bin")
-                         + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"),
-            },
-            "RunAtLoad": True,
-            "KeepAlive": True,
-            "ProcessType": "Interactive",
-        }, sort_keys=False).decode("utf-8")
-    return (
-        "[Unit]\n"
-        "Description=Pi Telegram terminal mirror\n"
-        "After=network-online.target\n"
-        "\n"
-        "[Service]\n"
-        "Type=simple\n"
-        f"Environment=PI_TELEGRAM_DIR={shlex.quote(str(home))}\n"
-        f"ExecStart={sys.executable} {shlex.quote(str(script))} run\n"
-        "Restart=always\n"
-        "RestartSec=5\n"
-        # The bot's own stop is bounded by STOP_GRACE_SECONDS; this leaves room
-        # for it without inviting the 90s default when something goes wrong.
-        "TimeoutStopSec=20\n"
-        "\n"
-        "[Install]\n"
-        "WantedBy=default.target\n"
-    )
-
-
-def systemctl(*arguments: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["systemctl", "--user", *arguments], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, check=False,
-    )
+    if not on_macos():
+        raise TelegramError("the Telegram mirror service supports macOS only")
+    return plistlib.dumps({
+        "Label": MAC_SERVICE_LABEL,
+        "ProgramArguments": [sys.executable, str(script), "run"],
+        "EnvironmentVariables": {
+            "PI_TELEGRAM_DIR": str(home),
+            "PATH": (str(Path.home() / ".local" / "bin")
+                     + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"),
+        },
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "ProcessType": "Interactive",
+    }, sort_keys=False).decode("utf-8")
 
 
 def require_service_platform() -> None:
-    if not is_wsl() and not on_macos():
-        raise TelegramError("the Telegram mirror service requires WSL or macOS")
+    if not on_macos():
+        raise TelegramError("the Telegram mirror service supports macOS only")
 
 
 def launchctl(*arguments: str) -> subprocess.CompletedProcess:
@@ -1975,42 +1947,28 @@ def install_service(home: Path) -> int:
     target = unit_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     write_private_file(target, unit_text(home))
-    if on_macos():
-        result = launchctl("bootstrap", f"gui/{os.getuid()}", str(target))
-        if result.returncode != 0 and not any(
-                phrase in result.stdout.lower()
-                for phrase in ("already bootstrapped", "service already loaded")):
-            raise TelegramError(f"launchctl bootstrap failed: {result.stdout.strip()}")
-        result = launchctl("kickstart", "-k", mac_service_target())
-        if result.returncode != 0:
-            raise TelegramError(f"launchctl kickstart failed: {result.stdout.strip()}")
-        print(f"installed {target} and started {MAC_SERVICE_LABEL}")
-        return 0
-    for arguments in (("daemon-reload",), ("enable", "--now", SERVICE_NAME)):
-        result = systemctl(*arguments)
-        if result.returncode != 0:
-            print(result.stdout, end="")
-            raise TelegramError(f"systemctl --user {' '.join(arguments)} failed")
-    print(f"installed {target} and started {SERVICE_NAME}")
+    result = launchctl("bootstrap", f"gui/{os.getuid()}", str(target))
+    if result.returncode != 0 and not any(
+            phrase in result.stdout.lower()
+            for phrase in ("already bootstrapped", "service already loaded")):
+        raise TelegramError(f"launchctl bootstrap failed: {result.stdout.strip()}")
+    result = launchctl("kickstart", "-k", mac_service_target())
+    if result.returncode != 0:
+        raise TelegramError(f"launchctl kickstart failed: {result.stdout.strip()}")
+    print(f"installed {target} and started {MAC_SERVICE_LABEL}")
     return 0
 
 
 def uninstall_service() -> int:
     require_service_platform()
     target = unit_path()
-    if on_macos():
-        result = launchctl("bootout", mac_service_target())
-        if result.returncode != 0 and not any(
-                phrase in result.stdout.lower()
-                for phrase in ("could not find service", "service not found", "no such process")
-        ):
-            raise TelegramError(f"launchctl bootout failed: {result.stdout.strip()}")
-        remove_file(target)
-        print(f"removed {target}")
-        return 0
-    systemctl("disable", "--now", SERVICE_NAME)
+    result = launchctl("bootout", mac_service_target())
+    if result.returncode != 0 and not any(
+            phrase in result.stdout.lower()
+            for phrase in ("could not find service", "service not found", "no such process")
+    ):
+        raise TelegramError(f"launchctl bootout failed: {result.stdout.strip()}")
     remove_file(target)
-    systemctl("daemon-reload")
     print(f"removed {target}")
     return 0
 
@@ -2124,8 +2082,7 @@ def status(home: Path) -> int:
         result = launchctl("print", mac_service_target())
         print(f"service: {'active' if result.returncode == 0 else 'inactive'}")
     else:
-        result = systemctl("is-active", SERVICE_NAME)
-        print(f"service: {result.stdout.strip() or 'unknown'}")
+        print("service: unsupported on this platform")
     return 0
 
 
@@ -2142,7 +2099,7 @@ def run(home: Path) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="pi-telegram.py",
-        description="Pi's Telegram terminal mirror bot (WSL and macOS).",
+        description="Pi's Telegram terminal mirror bot (macOS only).",
         epilog=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -2176,6 +2133,7 @@ def main(argv: list[str]) -> int:
     if args.command == "status":
         return status(home)
     if args.command == "service-unit":
+        require_service_platform()
         print(unit_text(home), end="")
         return 0
     if args.command == "install-service":
