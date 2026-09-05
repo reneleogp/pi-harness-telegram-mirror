@@ -497,6 +497,7 @@ class Voice:
     revision: int = 1
     audio: Optional[Path] = None
     prompt_id: Optional[int] = None
+    migration_nonce: Optional[str] = None
 
 
 @dataclass
@@ -516,6 +517,8 @@ class MirrorBot:
     transcribers: set = field(default_factory=set)
     active_transcription: bool = False
     _sequence: int = 0
+    migration_nonce: Optional[str] = None
+    migration_delivery_ids: dict[str, str] = field(default_factory=dict)
     _stopping: bool = False
 
     # --- helpers ---
@@ -771,13 +774,14 @@ class MirrorBot:
 
     async def accept_text(self, text: str, reply_to: int,
                           image: Optional[dict[str, str]] = None,
-                          image_bytes: int = 0) -> None:
+                          image_bytes: int = 0) -> Optional[str]:
         item = Queued(id=self.next_id(), text=text, reply_to=reply_to,
                       image=image, image_bytes=image_bytes)
         self.queue.append(item)
         if not self.connected:
             await self.send(OFFLINE_REPLY, reply_to=reply_to)
         await self.pump()
+        return item.id
 
     def queued_image_bytes(self) -> int:
         return sum(item.image_bytes for item in (*self.queue, *self.pending.values()))
@@ -804,6 +808,10 @@ class MirrorBot:
         item = self.pending.pop(message_id, None)
         if item is None:
             return
+        migration_nonce = self.migration_delivery_ids.pop(message_id, None)
+        if migration_nonce is not None:
+            await self.write_frame({"t": "migration_ack", "nonce": migration_nonce,
+                                    "text": True, "image": True, "voice": True})
         # Pending state clears either way: the message reached Pi, so it must
         # never be re-delivered. Only the visible receipt is optional.
         if not self.config.confirmations:
@@ -934,8 +942,11 @@ class MirrorBot:
             return
         await self.answer_callback(callback_id)
         if action == "send":
+            migration_nonce = entry.migration_nonce
             await self.finish_voice(entry, SENT_FOOTER)
-            await self.accept_text(entry.text, entry.voice_id)
+            delivery_id = await self.accept_text(entry.text, entry.voice_id)
+            if migration_nonce is not None and delivery_id is not None:
+                self.migration_delivery_ids[delivery_id] = migration_nonce
             return
         if action == "cancel":
             await self.finish_voice(entry, CANCELLED_FOOTER)
@@ -1132,10 +1143,28 @@ class MirrorBot:
         if kind == "rejected":
             await self.on_rejected(str(frame.get("id")))
             return
+        if kind == "migration_voice":
+            nonce = frame.get("nonce")
+            transcript = frame.get("text")
+            if (isinstance(nonce, str) and nonce == self.migration_nonce and
+                    isinstance(transcript, str) and transcript.strip() and
+                    utf16_length(transcript) <= TRANSCRIPT_CARD_LIMIT):
+                card = await self.send(transcript)
+                if card is not None:
+                    voice_id = int(card["message_id"])
+                    if await self.edit_card(card["message_id"], transcript, main_markup(voice_id, 1)):
+                        self.voices[voice_id] = Voice(
+                            voice_id=voice_id, card_id=voice_id,
+                            text=transcript, audio=None, migration_nonce=nonce,
+                        )
+            return
         if kind == "migration_ack":
             nonce = frame.get("nonce")
-            if isinstance(nonce, str) and all(frame.get(key) is True for key in ("text", "image", "voice")):
-                write_private_file(migration_ack_path(self.config.home), json.dumps({"nonce": nonce, "text": True, "image": True, "voice": True}))
+            if (isinstance(nonce, str) and nonce == self.migration_nonce and
+                    all(frame.get(key) is True for key in ("text", "image", "voice"))):
+                write_private_file(migration_ack_path(self.config.home), json.dumps({
+                    "nonce": nonce, "text": True, "image": True, "voice": True,
+                }))
             return
         if kind == "terminal":
             if self.mirror_on and isinstance(frame.get("text"), str):
@@ -1180,6 +1209,7 @@ class MirrorBot:
                 await asyncio.sleep(0.2)
                 continue
             if self.client is not None and not self.client.is_closing():
+                self.migration_nonce = str(nonce)
                 await self.write_frame({"t": "migration_verify", "nonce": nonce,
                                         "text": payload.get("text"),
                                         "image": payload.get("image"),

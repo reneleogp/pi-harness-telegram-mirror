@@ -152,7 +152,7 @@ function asMigrationVoice(value: unknown): MigrationVoice | undefined {
   if (typeof path !== "string" || !path.startsWith("/")) return undefined;
   try {
     const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink() ||
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_VOICE_BYTES ||
         (typeof process.getuid === "function" && stat.uid !== process.getuid())) return undefined;
   } catch {
     return undefined;
@@ -207,6 +207,7 @@ function asQueuedImage(value: unknown): QueuedImage | undefined {
 // extensions its clipboard paste can produce.
 const CLIPBOARD_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const CLIPBOARD_EXTENSIONS = "png|jpg|jpeg|webp";
+const MAX_VOICE_BYTES = positiveInteger("PI_TELEGRAM_MAX_VOICE_BYTES", 20 * 1024 * 1024);
 const MAX_CLIPBOARD_BYTES = positiveInteger("PI_TELEGRAM_MAX_IMAGE_BYTES", 10 * 1024 * 1024);
 const MAX_CLIPBOARD_TOTAL_BYTES = MAX_CLIPBOARD_BYTES * 3;
 const MAX_CLIPBOARD_IMAGES = 10;
@@ -560,8 +561,7 @@ export default function (pi: ExtensionAPI) {
             { type: "image", data: image.data, mimeType: image.mime }] as never,
             { deliverAs: "steer" });
           const transcript = await transcribeMigrationVoice(voice.path);
-          await pi.sendUserMessage(transcript, { deliverAs: "steer" });
-          write({ t: "migration_ack", nonce: frame.nonce, text: true, image: true, voice: true });
+          write({ t: "migration_voice", nonce: frame.nonce, text: transcript });
         }).catch((error: unknown) => {
           const detail = error instanceof Error ? error.message : String(error);
           console.error(`pi-telegram-mirror: migration verification failed: ${detail}`);
