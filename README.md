@@ -53,16 +53,17 @@ Voice notes receive a review card with Send, Edit, Cancel, bounded transcripts, 
 
 ## Local Parakeet V3 voice
 
-Optional macOS Apple Silicon setup:
+Optional macOS or Linux setup:
 
 ```sh
-brew install ffmpeg uv
+# macOS: brew install ffmpeg uv
+# Linux: install ffmpeg and uv with your distribution's package manager
 uv tool install 'parakeet-mlx==0.5.2'
 python3 /installed/package/bin/pi-parakeet-mlx-transcribe.py --help
 # prewarm by transcribing a short local sample before going live
 ```
 
-The adapter uses public `mlx-community/parakeet-tdt-0.6b-v3`, no cloud or required Hugging Face token, private temporary output, transcript-only stdout, bounded diagnostics, process-group termination, and cleanup. Cloud transcription is not required.
+The adapter uses public `mlx-community/parakeet-tdt-0.6b-v3`, no cloud or required Hugging Face token, private temporary output, transcript-only stdout, bounded diagnostics, process-group termination, and cleanup. Cloud transcription is not required. On Linux, the service includes `~/.local/bin` so a `uv tool install` executable is available.
 
 ## Migration
 

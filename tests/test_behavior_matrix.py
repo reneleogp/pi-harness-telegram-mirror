@@ -82,6 +82,12 @@ def test_service_unit_is_platform_native_and_secret_free(tmp_path):
         assert result.returncode != 0
 
 
+def test_supported_platforms_use_package_voice_adapter(monkeypatch):
+    bot = load_bot()
+    monkeypatch.setattr(bot.platform, "system", lambda: "Linux")
+    assert bot.default_transcribe_command() == str(ROOT / "bin/pi-parakeet-mlx-transcribe.py")
+
+
 def test_rejected_delivery_retries_once_then_reports_drop():
     bot = load_bot()
     mirror = bot.MirrorBot(bot.Config(Path("/tmp"), "token", 1, 1, "transcribe", "http://fake"), bot.TelegramApi("http://fake", "token"))

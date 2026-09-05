@@ -125,13 +125,13 @@ MAC_SERVICE_NAME = f"{MAC_SERVICE_LABEL}.plist"
 SYSTEMD_SERVICE_NAME = SERVICE_NAME
 DEFAULT_API_BASE = "https://api.telegram.org"
 DEFAULT_TRANSCRIBE_COMMAND = "parakeet-tdt-0.6b-v3"
-MACOS_TRANSCRIBE_ADAPTER = str(Path(__file__).resolve().with_name("pi-parakeet-mlx-transcribe.py"))
+PARAKEET_TRANSCRIBE_ADAPTER = str(Path(__file__).resolve().with_name("pi-parakeet-mlx-transcribe.py"))
 
 
 def default_transcribe_command() -> str:
-    """Use the package-owned MLX adapter on macOS."""
-    if platform.system() == "Darwin":
-        return MACOS_TRANSCRIBE_ADAPTER
+    """Use the package-owned MLX adapter on supported service platforms."""
+    if platform.system() in ("Darwin", "Linux"):
+        return PARAKEET_TRANSCRIBE_ADAPTER
     return DEFAULT_TRANSCRIBE_COMMAND
 
 MIRROR_OFF_REPLY = "Telegram mirror is off. Send /telegram_on to enable it."

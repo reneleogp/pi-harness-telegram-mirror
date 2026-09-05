@@ -37,7 +37,7 @@ The command fails if the package is not installed; no repository checkout is nee
    The pairing identifiers land in `~/.pi-telegram/config.json`.
    Messages from any other account or chat are ignored without downloading attachments or forwarding content.
 
-4. On macOS Apple Silicon, install the supported local voice prerequisites:
+4. Install the supported local voice prerequisites. On macOS Apple Silicon:
 
    ```sh
    brew install ffmpeg uv
@@ -45,7 +45,7 @@ The command fails if the package is not installed; no repository checkout is nee
    ${PI_TELEGRAM_PACKAGE}/bin/pi-parakeet-mlx-transcribe.py --help
    ```
 
-   The macOS default is the Pi-owned `${PI_TELEGRAM_PACKAGE}/bin/pi-parakeet-mlx-transcribe.py` adapter.
+   On macOS and Linux, the default is the Pi-owned `${PI_TELEGRAM_PACKAGE}/bin/pi-parakeet-mlx-transcribe.py` adapter. On Linux, install `ffmpeg` and `uv` with your distribution's package manager first; the installed user service includes `~/.local/bin` for the `uv tool` executable.
    It invokes `parakeet-mlx==0.5.2` with the public `mlx-community/parakeet-tdt-0.6b-v3` model, reads its private `.txt` output, and prints only transcript text.
    Prewarm the model before relying on the 180-second voice-note bound, because its first Hugging Face download may take longer:
 
