@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, subprocess, sys, tempfile
+import json, os, plistlib, shlex, subprocess, sys, tempfile
 from pathlib import Path
 ROOT=Path(__file__).parents[1]
 OWNER=ROOT/'bin/pi-telegram-owner.py'
@@ -13,6 +13,18 @@ def test_exact_root_and_contention():
   assert run('claim',str(sub),env=e).returncode != 0
   assert run('claim',str(root),env=e).returncode != 0
   assert not (h/'session.json').exists()
+def parse_systemd_unit(text):
+ sections = {}; section = None
+ for line in text.splitlines():
+  if not line: continue
+  if line.startswith('[') and line.endswith(']'):
+   section = line[1:-1]; sections[section] = {}; continue
+  assert section is not None and '=' in line
+  key, value = line.split('=', 1)
+  parsed = shlex.split(value, comments=False)
+  sections[section].setdefault(key, []).append([item.replace('%%', '%') for item in parsed])
+ return sections
+
 def test_permissions_and_no_secret_in_unit():
  with tempfile.TemporaryDirectory() as t:
   h=Path(t)/'h'; e={**os.environ,'PI_TELEGRAM_DIR':str(h)}; (h/'env').parent.mkdir(); (h/'env').write_text('TELEGRAM_BOT_TOKEN=secret\n'); (h/'env').chmod(0o600)
@@ -20,9 +32,12 @@ def test_permissions_and_no_secret_in_unit():
   assert result.returncode == 0
   assert 'secret' not in result.stdout and 'TELEGRAM_BOT_TOKEN' not in result.stdout
   if sys.platform == 'darwin':
-   assert '<plist' in result.stdout
+   unit = plistlib.loads(result.stdout.encode())
+   assert unit['EnvironmentVariables']['PI_TELEGRAM_DIR'] == str(h)
   elif sys.platform == 'linux':
-   assert '[Service]' in result.stdout
-   assert 'TELEGRAM_BOT_TOKEN' not in result.stdout
+   unit = parse_systemd_unit(result.stdout)
+   assert unit['Service']['Type'] == [['simple']]
+   assert unit['Service']['Environment'] == [[f'PI_TELEGRAM_DIR={h}']]
+   assert unit['Install']['WantedBy'] == [['default.target']]
   assert (h/'env').stat().st_mode & 0o077 == 0
 def test_help(): assert subprocess.run([sys.executable,str(ROOT/'bin/pi-telegram.py'),'--help'],capture_output=True).returncode==0
