@@ -1,6 +1,6 @@
 // Pi Telegram terminal mirror bridge for Pi.
 //
-// This extension is the Pi half of the WSL and macOS Telegram mirror. bin/pi-telegram.py
+// This extension is the Pi half of the macOS Telegram mirror. bin/pi-telegram.py
 // owns Telegram, pairing, mirror mode, the in-memory inbound queue, voice
 // transcription, and every Telegram reply. This half only:
 //
@@ -556,6 +556,7 @@ export default function (pi: ExtensionAPI) {
     }).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       console.error(`pi-telegram-mirror: could not submit a Telegram message: ${detail}`);
+      write({ t: "rejected", id });
     });
   }
 
