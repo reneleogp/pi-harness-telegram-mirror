@@ -49,11 +49,21 @@ def identity(pid):
             return out
         raw=Path(f"/proc/{pid}/stat").read_text(); tail=raw[raw.rfind(")")+2:].split(); return tail[19]
     except (OSError, subprocess.SubprocessError, IndexError): return ""
+def process_state(pid):
+    try:
+        if sys.platform == "darwin":
+            return subprocess.check_output(["ps", "-o", "state=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL).strip()
+        raw = Path(f"/proc/{pid}/stat").read_text()
+        return raw[raw.rfind(")") + 2:].split()[0]
+    except (OSError, subprocess.SubprocessError, IndexError):
+        return ""
 def alive(record):
     try:
-        return (int(record["pid"]) > 0 and os.kill(int(record["pid"]),0) is None and
+        pid = int(record["pid"])
+        state = process_state(pid)
+        return (pid > 0 and state and not state.startswith("Z") and os.kill(pid,0) is None and
                 int(record["uid"]) == getattr(os,"getuid",lambda: -1)() and
-                record["start"] == identity(int(record["pid"])) and
+                record["start"] == identity(pid) and
                 Path(record["root"]).resolve(strict=False) in map(Path, roots()))
     except (KeyError, ValueError, OSError): return False
 def read_record():
