@@ -291,7 +291,12 @@ def read_env(home: Path) -> dict[str, str]:
 
 def read_config(home: Path) -> dict[str, Any]:
     try:
-        data = json.loads(config_file(home).read_text(encoding="utf-8"))
+        target = config_file(home)
+        stat = target.lstat()
+        if (stat.st_mode & 0o170000 != 0o100000 or stat.st_mode & 0o077 or
+                stat.st_uid != getattr(os, "getuid", lambda: -1)()):
+            return {}
+        data = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}

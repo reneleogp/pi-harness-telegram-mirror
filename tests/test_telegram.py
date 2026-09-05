@@ -89,6 +89,10 @@ def test_env_requires_private_regular_file(tmp_path):
         pass
     else:
         raise AssertionError("symlinked state directory was accepted")
+    config_target = tmp_path / "config-target"
+    config_target.write_text('{"user_id": 1}')
+    (home / "config.json").symlink_to(config_target)
+    assert bot.read_config(home) == {}
 
 
 def test_environment_token_is_not_an_authorized_source(tmp_path, monkeypatch):
