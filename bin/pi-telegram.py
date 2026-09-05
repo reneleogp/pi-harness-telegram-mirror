@@ -1914,6 +1914,18 @@ def unit_path() -> Path:
     return Path.home() / ".config" / "systemd" / "user" / SYSTEMD_SERVICE_NAME
 
 
+def systemd_quote(value: str) -> str:
+    escaped = []
+    for char in value:
+        if char in ('\\', '"'):
+            escaped.append('\\' + char)
+        elif ord(char) < 0x20 or ord(char) == 0x7f:
+            escaped.append(f'\\x{ord(char):02x}')
+        else:
+            escaped.append(char)
+    return '"' + ''.join(escaped) + '"'
+
+
 def unit_text(home: Path) -> str:
     script = Path(__file__).resolve()
     if on_macos():
@@ -1930,12 +1942,12 @@ def unit_text(home: Path) -> str:
             "ProcessType": "Interactive",
         }, sort_keys=False).decode("utf-8")
     if on_linux():
-        return ("[Unit]\\nDescription=Pi Telegram mirror\\nAfter=network-online.target\\n\\n"
-                "[Service]\\nType=simple\\n"
-                f"ExecStart={shlex.join([sys.executable, str(script), 'run'])}\\n"
-                f"Environment=PI_TELEGRAM_DIR={home}\\n"
-                "Restart=on-failure\\nRestartSec=3\\n\\n"
-                "[Install]\\nWantedBy=default.target\\n")
+        return ("[Unit]\nDescription=Pi Telegram mirror\nAfter=network-online.target\n\n"
+                "[Service]\nType=simple\n"
+                f"ExecStart={shlex.join([sys.executable, str(script), 'run'])}\n"
+                f"Environment=PI_TELEGRAM_DIR={systemd_quote(str(home))}\n"
+                "Restart=on-failure\nRestartSec=3\n\n"
+                "[Install]\nWantedBy=default.target\n")
     raise TelegramError("the Telegram mirror service supports Linux and macOS")
 
 

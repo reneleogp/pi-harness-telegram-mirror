@@ -2,6 +2,8 @@ import asyncio
 import importlib.util
 import json
 import os
+import plistlib
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -40,13 +42,39 @@ def test_ineligible_session_cannot_create_ownership_record(tmp_path):
     assert not (home / "session.json").exists()
 
 
+def parse_systemd_unit(text):
+    sections = {}
+    section = None
+    for line in text.splitlines():
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+            sections[section] = {}
+            continue
+        assert section is not None and "=" in line
+        key, value = line.split("=", 1)
+        sections[section].setdefault(key, []).append(shlex.split(value, comments=False))
+    return sections
+
+
 def test_service_unit_is_platform_native_and_secret_free(tmp_path):
-    env = {**os.environ, "PI_TELEGRAM_DIR": str(tmp_path / "home")}
+    state_dir = tmp_path / "state with spaces"
+    env = {**os.environ, "PI_TELEGRAM_DIR": str(state_dir)}
     result = subprocess.run([sys.executable, str(BOT), "service-unit"], env=env, capture_output=True, text=True)
-    if sys.platform in ("darwin", "linux"):
+    if sys.platform == "darwin":
         assert result.returncode == 0
+        unit = plistlib.loads(result.stdout.encode())
+        assert unit["Label"] == "com.pi.telegram"
+        assert unit["EnvironmentVariables"]["PI_TELEGRAM_DIR"] == str(state_dir)
         assert "TELEGRAM_BOT_TOKEN" not in result.stdout
-        assert ("<plist" in result.stdout) if sys.platform == "darwin" else ("[Service]" in result.stdout)
+    elif sys.platform == "linux":
+        assert result.returncode == 0
+        unit = parse_systemd_unit(result.stdout)
+        assert unit["Service"]["Type"] == [["simple"]]
+        assert unit["Service"]["Environment"] == [[f"PI_TELEGRAM_DIR={state_dir}"]]
+        assert unit["Install"]["WantedBy"] == [["default.target"]]
+        assert "TELEGRAM_BOT_TOKEN" not in result.stdout
     else:
         assert result.returncode != 0
 
