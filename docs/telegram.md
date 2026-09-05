@@ -84,7 +84,7 @@ If this extension is installed globally, it loads in every crewmate and scout as
 
 Two independent rules prevent that:
 
-- The extension mirrors only from the session that holds the Pi home's session lock, checked against the running process's own ancestry.
+- The extension mirrors only from the session that holds the Pi home's session lock, checked against the running process's own ancestry. On macOS, the recorded process-start identity uses `ps`'s fixed C locale, so LaunchAgent and interactive sessions produce the same exact value.
   While the extension waits for its startup record, absent, invalid, dead-session, and unrelated-process records remain retryable, so a leftover record cannot keep the mirror dark until you reload Pi.
   Every other Pi session stays completely inert: no connection, no footer, no commands.
 - The bot serves one session at a time and refuses a second connection instead of handing the chat over to it.

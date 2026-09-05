@@ -45,8 +45,12 @@ def roots(): return [str(Path(x).expanduser().resolve(strict=False)) for x in co
 def identity(pid):
     try:
         if sys.platform == "darwin":
-            out=subprocess.check_output(["ps","-o","lstart=","-p",str(pid)], text=True, stderr=subprocess.DEVNULL).strip()
-            return out
+            # lstart is localized by ps; pin its locale so records made by a
+            # LaunchAgent and an interactive session use the same identity.
+            env = {**os.environ, "LC_ALL": "C", "LANG": "C"}
+            out=subprocess.check_output(["ps","-o","lstart=","-p",str(pid)], env=env,
+                                        text=True, stderr=subprocess.DEVNULL)
+            return out.strip()
         raw=Path(f"/proc/{pid}/stat").read_text(); tail=raw[raw.rfind(")")+2:].split(); return tail[19]
     except (OSError, subprocess.SubprocessError, IndexError): return ""
 def process_state(pid):
