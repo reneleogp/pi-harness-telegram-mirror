@@ -24,19 +24,14 @@ def command(*args, env):
                           capture_output=True, text=True)
 
 
-def test_owner_records_requesting_process_and_reclaims_dead_peer(tmp_path):
+def test_unrelated_process_cannot_claim_allowed_root(tmp_path):
     home = tmp_path / "home"
     root = tmp_path / "project"
     root.mkdir()
     env = {**os.environ, "PI_TELEGRAM_DIR": str(home)}
     assert command("allow-root", str(root), env=env).returncode == 0
-    assert command("claim", str(root), str(os.getpid()), env=env).returncode == 0
-    record = json.loads((home / "session.json").read_text())
-    assert record["pid"] == os.getpid()
-    assert command("check-peer", str(os.getpid()), str(os.getuid()), env=env).returncode == 0
-    record["pid"] = 99999999
-    (home / "session.json").write_text(json.dumps(record) + "\n")
-    assert command("claim", str(root), str(os.getpid()), env=env).returncode == 0
+    assert command("claim", str(root), str(os.getpid()), env=env).returncode != 0
+    assert not (home / "session.json").exists()
 
 
 def test_migration_writes_usable_env_without_touching_legacy(tmp_path):

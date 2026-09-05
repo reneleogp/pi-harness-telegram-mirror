@@ -11,7 +11,12 @@ def test_exact_root_and_contention():
   h=Path(t)/'h'; root=Path(t)/'root'; root.mkdir(); sub=root/'sub'; sub.mkdir(); e={**os.environ,'PI_TELEGRAM_DIR':str(h)}
   assert run('allow-root',str(root),env=e).returncode==0
   assert run('claim',str(sub),env=e).returncode != 0
-  assert run('claim',str(root),env=e).returncode==0
+  pi = Path(t) / 'pi-coding-agent'
+  pi.write_text('import os, subprocess, sys, time\n'
+                'r=subprocess.run([sys.executable, sys.argv[1], "claim", sys.argv[2], str(os.getpid())], env=os.environ)\n'
+                'sys.exit(r.returncode)\n')
+  child = subprocess.run([sys.executable, str(pi), str(OWNER), str(root)], env=e)
+  assert child.returncode == 0
   assert json.loads((h/'session.json').read_text())['root']==str(root.resolve())
 def test_permissions_and_no_secret_in_unit():
  with tempfile.TemporaryDirectory() as t:

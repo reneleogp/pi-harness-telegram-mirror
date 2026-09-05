@@ -45,6 +45,19 @@ def acquire_guard():
 def release():
     try: GUARD.unlink()
     except OSError: pass
+def is_pi_process(pid):
+    if pid != os.getppid(): return False
+    try:
+        if sys.platform == "darwin":
+            command = subprocess.check_output(["ps", "-o", "command=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL)
+        else:
+            command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\\0", b" ").decode()
+        parts = command.split()
+        executable = Path(parts[0]).name if parts else ""
+        return executable in {"pi", "pi.js", "pi.mjs"} or "pi-coding-agent" in command
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return False
+
 def claim(cwd, owner_pid=None):
     secure(); root=str(Path(cwd).resolve(strict=True))
     if root not in roots(): return 1
@@ -54,7 +67,7 @@ def claim(cwd, owner_pid=None):
         uid = getattr(os, "getuid", lambda: -1)()
         old=read_record()
         if old and alive(old) and not (int(old.get("pid",-1))==pid and old.get("root")==root): return 1
-        if pid <= 0 or identity(pid) == "": return 1
+        if pid <= 0 or not is_pi_process(pid) or identity(pid) == "": return 1
         record={"pid":pid,"uid":uid,"start":identity(pid),"root":root,"incarnation":secrets.token_hex(16)}
         tmp=RECORD.with_name(".session.tmp.%s"%secrets.token_hex(8)); tmp.write_text(json.dumps(record)+"\n"); tmp.chmod(0o600); os.replace(tmp,RECORD); return 0
     finally: release()
