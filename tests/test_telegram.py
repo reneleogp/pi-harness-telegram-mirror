@@ -41,6 +41,8 @@ def test_migration_writes_usable_env_without_touching_legacy(tmp_path):
     legacy.mkdir()
     (legacy / "env").write_text("TELEGRAM_BOT_TOKEN=test-token\n")
     (legacy / "config.json").write_text(json.dumps({"user_id": 7, "chat_id": 8}))
+    os.chmod(legacy / "env", 0o600)
+    os.chmod(legacy / "config.json", 0o600)
     env = {**os.environ, "HOME": str(tmp_path), "PI_TELEGRAM_DIR": str(target)}
     result = subprocess.run([sys.executable, str(BOT), "migrate"], env=env,
                             capture_output=True, text=True)
@@ -54,6 +56,8 @@ def test_migration_writes_usable_env_without_touching_legacy(tmp_path):
     (target / "env").symlink_to(outside)
     (conventional / "env").write_text("TELEGRAM_BOT_TOKEN=test-token\n")
     (conventional / "config.json").write_text(json.dumps({"user_id": 7, "chat_id": 8}))
+    os.chmod(conventional / "env", 0o600)
+    os.chmod(conventional / "config.json", 0o600)
     result = subprocess.run([sys.executable, str(BOT), "migrate"], env=env,
                             capture_output=True, text=True)
     assert result.returncode != 0
