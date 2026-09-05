@@ -72,7 +72,7 @@ After installing and connecting Pi, run:
 python3 /installed/package/bin/pi-telegram.py migrate
 ```
 
-It validates and copies token, pairing, and settings from legacy `~/.firstmate-telegram` into `~/.pi-telegram` without printing secrets or deleting/mutating the old directory. Retry is idempotent. Run live text/image/voice verification with `python3 /installed/package/bin/pi-telegram.py verify-migration --text --image --voice --voice-file /path/to/verification.ogg`; it waits for authenticated Pi receipts before clearing the migration gate. Retire the old setup only after it succeeds. The legacy path exists only in this explicit migration operation, not normal runtime.
+It validates and copies token, pairing, and settings from legacy `~/.firstmate-telegram` into `~/.pi-telegram` without printing secrets or deleting/mutating the old directory. Retry is idempotent. Run live verification with the actual text, image, and voice payloads: `python3 /installed/package/bin/pi-telegram.py verify-migration --text --text-value 'migration verification' --image --image-file /path/to/verification.png --voice --voice-file /path/to/verification.ogg`; it waits for authenticated Pi receipts before clearing the migration gate. Retire the old setup only after it succeeds. The legacy path exists only in this explicit migration operation, not normal runtime.
 
 ## Troubleshooting, privacy, limitations
 
