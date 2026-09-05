@@ -387,6 +387,7 @@ export default function (pi: ExtensionAPI) {
   let confirmations = true;
   let displayStatus = readDisplayStatus();
   let commandsRegistered = false;
+  let pendingMigrationNonce: string | null = null;
   let lockWaitTimer: ReturnType<typeof setTimeout> | null = null;
   let lockWaitAttempts = 0;
 
@@ -509,9 +510,8 @@ export default function (pi: ExtensionAPI) {
           await pi.sendUserMessage([{ type: "text", text: "migration-image" },
             { type: "image", data: image.data, mimeType: image.mime }] as never,
             { deliverAs: "steer" });
-          activeCtx?.ui.notify("Review migration voice transcript, then send it.", "info");
-          await pi.sendUserMessage("migration voice transcript review/send", { deliverAs: "steer" });
-          write({ t: "migration_ack", nonce: frame.nonce, text: true, image: true, voice: true });
+          pendingMigrationNonce = frame.nonce;
+          activeCtx?.ui.notify("Migration text and image delivered. Complete voice transcription review and send, then run /telegram-migration-verified.", "warning");
         }).catch(() => undefined);
       }
       return;
@@ -666,6 +666,20 @@ export default function (pi: ExtensionAPI) {
       handler: async (_args, ctx) => {
         activeCtx = ctx;
         ctx.ui.notify(await sendCommand("toggle"), "info");
+      },
+    });
+
+    pi.registerCommand?.("telegram-migration-verified", {
+      description: "Acknowledge completed migration voice review and send.",
+      handler: async (_args, ctx) => {
+        activeCtx = ctx;
+        if (pendingMigrationNonce) {
+          write({ t: "migration_ack", nonce: pendingMigrationNonce, text: true, image: true, voice: true });
+          pendingMigrationNonce = null;
+          ctx.ui.notify("Migration verification acknowledged.", "info");
+        } else {
+          ctx.ui.notify("No migration verification is waiting.", "warning");
+        }
       },
     });
 
