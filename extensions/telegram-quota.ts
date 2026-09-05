@@ -62,6 +62,7 @@ export const readCodexQuota: QuotaReader = () => new Promise((resolve, reject) =
       try {
         const message = JSON.parse(line) as RpcMessage;
         if (message.id === 1) {
+          child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
           child.stdin.write(`${JSON.stringify({ id: 2, method: "account/rateLimits/read", params: {} })}\n`);
         } else if (message.id === 2) {
           const result = (message.result ?? {}) as Record<string, unknown>;
