@@ -399,6 +399,7 @@ export default function (pi: ExtensionAPI) {
   // may do. Idempotent, because it runs on every session start and again when a
   // pending lock finally names this session.
   function startBridge(): void {
+    if (!owned) return;
     registerCommands();
     displayStatus = readDisplayStatus();
     refreshFooter();
@@ -558,18 +559,37 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
+  function retryOwnership(ctx: ExtensionContext): void {
+    if (stopped || owned || lockWaitTimer || lockWaitAttempts >= LOCK_WAIT_ATTEMPTS) return;
+    lockWaitAttempts += 1;
+    lockWaitTimer = setTimeout(() => {
+      lockWaitTimer = null;
+      if (claim(ctx.cwd)) {
+        owned = true;
+        startBridge();
+      } else {
+        retryOwnership(ctx);
+      }
+    }, LOCK_WAIT_MS);
+    lockWaitTimer.unref?.();
+  }
+
   pi.on?.("session_start", (_event, ctx) => {
     activeCtx = ctx;
     stopped = false;
     reconnectDelay = RECONNECT_MS;
+    lockWaitAttempts = 0;
     owned = claim(ctx.cwd);
     if (owned) startBridge();
+    else retryOwnership(ctx);
   });
 
   pi.on?.("session_shutdown", () => {
     stopped = true;
     if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (lockWaitTimer) clearTimeout(lockWaitTimer);
     reconnectTimer = null;
+    lockWaitTimer = null;
     closeSocket();
     connected = false;
     activeCtx?.ui?.setStatus?.(FOOTER_KEY, undefined);

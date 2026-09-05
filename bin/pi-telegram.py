@@ -2042,11 +2042,21 @@ def migrate(home: Path) -> int:
     private_dir(home)
     write_private_file(env_file(home), "TELEGRAM_BOT_TOKEN=" + token + "\n")
     existing = read_config(home)
-    merged = dict(data)
-    merged.update(existing)
+    merged = dict(existing)
+    merged.update(data)
     merged["migration_pending"] = True
     write_config(home, merged)
     print("migration copied and validated; legacy configuration was not changed")
+    return 0
+
+
+def verify_migration(home: Path) -> int:
+    config = load_config(home)
+    TelegramApi(config.api_base, config.token).request_sync("getMe", {})
+    data = read_config(home)
+    data["migration_pending"] = False
+    write_config(home, data)
+    print("migration verification acknowledged")
     return 0
 
 
@@ -2088,7 +2098,7 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument(
         "command",
-        choices=["run", "pair", "status", "service-unit", "install-service", "uninstall-service", "allow-root", "migrate"],
+        choices=["run", "pair", "status", "service-unit", "install-service", "uninstall-service", "allow-root", "migrate", "verify-migration"],
     )
     parser.add_argument("root", nargs="?", help="canonical Pi project root for allow-root")
     args = parser.parse_args(argv)
@@ -2099,6 +2109,8 @@ def main(argv: list[str]) -> int:
         return allow_root(home, args.root)
     if args.command == "migrate":
         return migrate(home)
+    if args.command == "verify-migration":
+        return verify_migration(home)
     if args.command == "run":
         return run(home)
     if args.command == "pair":

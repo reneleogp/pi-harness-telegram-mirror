@@ -1,7 +1,7 @@
 # Telegram terminal mirror (WSL and macOS)
 
 The Telegram mirror puts the one Pi terminal conversation on your phone, in both directions.
-It is a private Python bot (`bin/pi-telegram.py`) running as a WSL systemd user service or a macOS LaunchAgent beside one Pi extension (`.pi/extensions/pi-telegram-mirror.ts`).
+It is a private Python bot (`bin/pi-telegram.py`) running as a WSL systemd user service or a macOS LaunchAgent beside the installed Pi package extension (`extensions/telegram-mirror.ts`).
 The bot supports Linux/WSL and macOS hosts only.
 
 Telegram text reaches Pi exactly as terminal text: no origin marker, no hidden provenance, and no Telegram-specific instruction.
@@ -68,7 +68,7 @@ The bot never starts Pi, never creates a second session, and contains no model o
    `bin/pi-telegram.py uninstall-service` stops and removes the service and is safe to repeat.
    After changing the script or extension, run `uninstall-service` followed by `install-service` to restart the service.
 
-The Pi half loads automatically with the other tracked Pi extensions in `.pi/extensions/` when Pi runs in a trusted Pi home.
+The Pi half is loaded by Pi's package manager from the installed package manifest; no project-local extension directory is required.
 It connects to the bot when a Pi session starts and retries on a widening delay while the bot is absent, so a home without the bot pays nothing but an occasional failed connection.
 
 ## Only your own session is mirrored
@@ -263,8 +263,6 @@ The wire protocol between the bot and the Pi extension is stated once in `bin/pi
 Regression entry points:
 
 ```sh
-tests/pi-telegram-mirror.test.sh
-tests/pi-telegram-extension.test.sh
-tests/pi-pi-primary-types.test.sh
-PI_TELEGRAM_LIVE_E2E=1 tests/pi-telegram-mirror-live-e2e.test.sh
+tests/run.sh
+PI_TELEGRAM_LIVE_E2E=1 tests/pi-telegram-live-e2e.test.sh
 ```
