@@ -65,6 +65,7 @@ type FinalizedMessage = {
 const RECONNECT_MS = positiveInteger("PI_TELEGRAM_RECONNECT_MS", 2000);
 const RECONNECT_MAX_MS = positiveInteger("PI_TELEGRAM_RECONNECT_MAX_MS", 60000);
 const COMMAND_TIMEOUT_MS = positiveInteger("PI_TELEGRAM_COMMAND_TIMEOUT_MS", 5000);
+const TRANSCRIPTION_STOP_GRACE_MS = 5000;
 // Pi loads this file while the session is starting, and the Pi session
 // lock is recorded from inside that same session moments later, so the first
 // ownership answer of a fresh session is "not yet" rather than "never". These
@@ -165,12 +166,39 @@ function transcribeMigrationVoice(path: string): Promise<string> {
     join(dirname(fileURLToPath(import.meta.url)), "../bin/pi-parakeet-mlx-transcribe.py");
   const python = process.env.PI_TELEGRAM_PYTHON || "python3";
   return new Promise((resolve, reject) => {
-    const child = spawn(python, [adapter, path], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(python, [adapter, path], {
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    let forceTimer: ReturnType<typeof setTimeout> | undefined;
+    const terminate = (signal: "SIGTERM" | "SIGKILL"): void => {
+      try {
+        if (child.pid && process.platform !== "win32") process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch {
+        try { child.kill(signal); } catch {}
+      }
+    };
+    const finish = (error?: Error, transcript?: string): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (forceTimer) clearTimeout(forceTimer);
+      if (error) reject(error);
+      else resolve(transcript as string);
+    };
     const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 2000).unref();
+      terminate("SIGTERM");
+      forceTimer = setTimeout(() => {
+        terminate("SIGKILL");
+        child.stdout.destroy();
+        child.stderr.destroy();
+        finish(new Error("migration transcription timed out"));
+      }, TRANSCRIPTION_STOP_GRACE_MS);
+      forceTimer.unref();
     }, 180000);
     child.stdout.on("data", (chunk: Buffer) => {
       if (Buffer.byteLength(stdout, "utf8") < 1048576) stdout += chunk.toString("utf8");
@@ -178,12 +206,11 @@ function transcribeMigrationVoice(path: string): Promise<string> {
     child.stderr.on("data", (chunk: Buffer) => {
       if (Buffer.byteLength(stderr, "utf8") < 4096) stderr += chunk.toString("utf8");
     });
-    child.on("error", (error) => { clearTimeout(timer); reject(error); });
+    child.on("error", (error) => finish(error));
     child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code !== 0) reject(new Error(stderr.trim().slice(0, 240) || `adapter exited ${code}`));
-      else if (!stdout.trim()) reject(new Error("adapter produced no transcript"));
-      else resolve(stdout.trim());
+      if (code !== 0) finish(new Error(stderr.trim().slice(0, 240) || `adapter exited ${code}`));
+      else if (!stdout.trim()) finish(new Error("adapter produced no transcript"));
+      else finish(undefined, stdout.trim());
     });
   });
 }
