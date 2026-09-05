@@ -18,7 +18,12 @@ def secure():
     except OSError:
         raise
 def config():
-    try: return json.loads(CONFIG.read_text())
+    try:
+        stat = CONFIG.lstat()
+        if (stat.st_mode & 0o170000 != 0o100000 or stat.st_mode & 0o077 or
+                stat.st_uid != getattr(os, "getuid", lambda: -1)()):
+            return {}
+        return json.loads(CONFIG.read_text())
     except (OSError, ValueError): return {}
 def write_config(data):
     if CONFIG.is_symlink(): raise OSError("configuration is a symlink")

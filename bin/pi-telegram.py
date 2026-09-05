@@ -1752,11 +1752,15 @@ def remove_file(path: Optional[Path]) -> None:
 
 def clear_audio(home: Path) -> None:
     directory = audio_dir(home)
-    if not directory.is_dir():
+    if directory.is_symlink() or not directory.is_dir():
         return
     for entry in directory.iterdir():
-        if entry.is_file():
-            remove_file(entry)
+        try:
+            stat = entry.lstat()
+            if stat.st_mode & 0o170000 == 0o100000:
+                remove_file(entry)
+        except OSError:
+            continue
 
 
 def transcribe_argv(command: str, audio: Path) -> list[str]:
@@ -2036,6 +2040,7 @@ def migrate(home: Path) -> int:
         raise TelegramError("legacy configuration failed validation; nothing was changed")
     private_dir(home)
     write_private_file(env_file(home), "TELEGRAM_BOT_TOKEN=" + token + "\n")
+    data["migration_pending"] = True
     write_config(home, data)
     print("migration copied and validated; legacy configuration was not changed")
     return 0
@@ -2049,6 +2054,7 @@ def status(home: Path) -> int:
     print(f"paired user: {data.get('user_id', 'none')}")
     print(f"paired chat: {data.get('chat_id', 'none')}")
     print(f"transcribe command: {data.get('transcribe_command', default_transcribe_command())}")
+    print(f"migration verification: {'pending' if data.get('migration_pending') else 'complete'}")
     print(f"socket: {'present' if socket_path(home).exists() else 'absent'}")
     if on_macos():
         result = launchctl("print", mac_service_target())
