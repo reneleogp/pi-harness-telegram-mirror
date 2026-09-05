@@ -200,7 +200,7 @@ def test_real_unix_socket_delivers_protocol_state(tmp_path):
         bot.peer_owns_session_lock = lambda _: True
         try:
             reader, writer = await asyncio.open_unix_connection(path=str(path))
-            writer.write(b'{"t":"hello","features":[]}\\n')
+            writer.write(b'{"t":"hello","features":[]}\n')
             await writer.drain()
             state = json.loads((await reader.readline()).decode())
             writer.close()
