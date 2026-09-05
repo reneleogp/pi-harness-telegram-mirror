@@ -10,7 +10,7 @@ The bot never starts Pi, never creates a second session, and contains no model o
 
 ## Setup
 
-Run `pi list` to locate the installed package directory, export that path as `PI_TELEGRAM_PACKAGE`, then run the commands below. For example: `export PI_TELEGRAM_PACKAGE=/installed/package`.
+Run `pi list --json` and select the installed `pi-harness-telegram-mirror` resource path, then export it as `PI_TELEGRAM_PACKAGE`; confirm it with `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py package-root`. For example: `export PI_TELEGRAM_PACKAGE=/installed/package`.
 
 1. Create a bot with Telegram's `@BotFather` and copy its token.
 2. Store the token privately (this file is never read by the service unit):
