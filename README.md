@@ -7,7 +7,7 @@ Standalone bidirectional Telegram mirror for one Pi terminal session. Review ext
 ```sh
 pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1
 pi update git:github.com/reneleogp/pi-harness-telegram-mirror@v1
-# For reproducible installs, replace @v1 with the published immutable commit SHA.
+`@v1` is an immutable release tag and must never be moved; for maximum auditability, replace it with the release commit SHA.
 pi remove git:github.com/reneleogp/pi-harness-telegram-mirror
 ```
 
