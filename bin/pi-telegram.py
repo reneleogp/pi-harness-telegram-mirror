@@ -312,7 +312,7 @@ class Config:
 
 
 def load_config(home: Path) -> Config:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN") or read_env(home).get("TELEGRAM_BOT_TOKEN", "")
+    token = read_env(home).get("TELEGRAM_BOT_TOKEN", "")
     if not token:
         raise TelegramError(
             f"no TELEGRAM_BOT_TOKEN in {env_file(home)}; add it as TELEGRAM_BOT_TOKEN=<token>"
@@ -1950,7 +1950,7 @@ def uninstall_service() -> int:
 
 
 def pair(home: Path) -> int:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN") or read_env(home).get("TELEGRAM_BOT_TOKEN", "")
+    token = read_env(home).get("TELEGRAM_BOT_TOKEN", "")
     if not token:
         raise TelegramError(f"no TELEGRAM_BOT_TOKEN in {env_file(home)}")
     base = os.environ.get("PI_TELEGRAM_API_BASE") or DEFAULT_API_BASE
@@ -2015,8 +2015,7 @@ def migrate(home: Path) -> int:
 
 def status(home: Path) -> int:
     data = read_config(home)
-    token = "present" if (os.environ.get("TELEGRAM_BOT_TOKEN")
-                          or read_env(home).get("TELEGRAM_BOT_TOKEN")) else "missing"
+    token = "present" if read_env(home).get("TELEGRAM_BOT_TOKEN") else "missing"
     print(f"home: {home}")
     print(f"token: {token}")
     print(f"paired user: {data.get('user_id', 'none')}")
