@@ -1908,6 +1908,7 @@ def run_transcribe(command: str, audio: Path, register: Optional[Any] = None) ->
         for reader in readers:
             reader.join()
         raise TelegramError("transcription timed out") from None
+    end_process_group(process)
     for reader in readers:
         reader.join()
     if process.returncode != 0:

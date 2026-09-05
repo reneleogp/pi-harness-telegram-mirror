@@ -121,10 +121,10 @@ def process_executable(pid):
 def process_command(pid):
     try:
         if sys.platform == "darwin":
-            return subprocess.check_output(["ps", "-o", "command=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL).strip()
-        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(bytes([0]), b" ").decode(errors="replace")
+            return subprocess.check_output(["ps", "-o", "command=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL).strip().split()
+        return [part.decode(errors="replace") for part in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if part]
     except (OSError, subprocess.SubprocessError):
-        return ""
+        return []
 
 def matches_executable(pid, expected):
     executable = process_executable(pid)
@@ -132,7 +132,7 @@ def matches_executable(pid, expected):
     if target.is_absolute():
         return executable == os.path.realpath(str(target))
     name = target.name
-    return Path(executable).name == name or any(Path(part).name == name for part in process_command(pid).split())
+    return Path(executable).name == name or any(Path(part).name == name for part in process_command(pid))
 
 def has_pi_ancestor(pid):
     expected = configured_executable()
