@@ -557,9 +557,11 @@ export default function (pi: ExtensionAPI) {
       if (text && image && voice) {
         deliveries = deliveries.then(async () => {
           await pi.sendUserMessage(frame.text as string, { deliverAs: "steer" });
+          write({ t: "migration_receipt", nonce: frame.nonce, stage: "text" });
           await pi.sendUserMessage([{ type: "text", text: "migration-image" },
             { type: "image", data: image.data, mimeType: image.mime }] as never,
             { deliverAs: "steer" });
+          write({ t: "migration_receipt", nonce: frame.nonce, stage: "image" });
           const transcript = await transcribeMigrationVoice(voice.path);
           write({ t: "migration_voice", nonce: frame.nonce, text: transcript });
         }).catch((error: unknown) => {
