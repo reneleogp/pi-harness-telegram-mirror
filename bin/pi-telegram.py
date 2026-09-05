@@ -344,6 +344,10 @@ class Config:
     confirmations: bool = True
 
 
+def valid_telegram_id(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def load_config(home: Path) -> Config:
     token = read_env(home).get("TELEGRAM_BOT_TOKEN", "")
     if not token:
@@ -353,7 +357,7 @@ def load_config(home: Path) -> Config:
     data = read_config(home)
     user_id = data.get("user_id")
     chat_id = data.get("chat_id")
-    if not isinstance(user_id, int) or not isinstance(chat_id, int):
+    if not valid_telegram_id(user_id) or not valid_telegram_id(chat_id):
         raise TelegramError(
             f"no pairing in {config_file(home)}; run pi-telegram.py pair and message the bot"
         )
@@ -2019,8 +2023,7 @@ def migrate(home: Path) -> int:
     data = read_config(legacy)
     user_id = data.get("user_id")
     chat_id = data.get("chat_id")
-    valid_id = lambda value: isinstance(value, int) and not isinstance(value, bool)
-    if not token or not valid_id(user_id) or not valid_id(chat_id):
+    if not token or not valid_telegram_id(user_id) or not valid_telegram_id(chat_id):
         raise TelegramError("legacy configuration failed validation; nothing was changed")
     private_dir(home)
     write_private_file(env_file(home), "TELEGRAM_BOT_TOKEN=" + token + "\n")
