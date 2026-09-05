@@ -2050,13 +2050,15 @@ def migrate(home: Path) -> int:
     return 0
 
 
-def verify_migration(home: Path) -> int:
+def verify_migration(home: Path, text: bool, image: bool, voice: bool) -> int:
+    if not (text and image and voice):
+        raise TelegramError("migration verification requires --text --image --voice")
     config = load_config(home)
     TelegramApi(config.api_base, config.token).request_sync("getMe", {})
     data = read_config(home)
     data["migration_pending"] = False
     write_config(home, data)
-    print("migration verification acknowledged")
+    print("migration text, image, and voice verification acknowledged")
     return 0
 
 
@@ -2101,6 +2103,9 @@ def main(argv: list[str]) -> int:
         choices=["run", "pair", "status", "service-unit", "install-service", "uninstall-service", "allow-root", "migrate", "verify-migration"],
     )
     parser.add_argument("root", nargs="?", help="canonical Pi project root for allow-root")
+    parser.add_argument("--text", action="store_true")
+    parser.add_argument("--image", action="store_true")
+    parser.add_argument("--voice", action="store_true")
     args = parser.parse_args(argv)
     home = private_dir(home_dir())
     if args.command == "allow-root":
@@ -2110,7 +2115,7 @@ def main(argv: list[str]) -> int:
     if args.command == "migrate":
         return migrate(home)
     if args.command == "verify-migration":
-        return verify_migration(home)
+        return verify_migration(home, args.text, args.image, args.voice)
     if args.command == "run":
         return run(home)
     if args.command == "pair":

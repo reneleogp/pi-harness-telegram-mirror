@@ -1,7 +1,7 @@
 # Telegram terminal mirror (WSL and macOS)
 
 The Telegram mirror puts the one Pi terminal conversation on your phone, in both directions.
-It is a private Python bot (`bin/pi-telegram.py`) running as a WSL systemd user service or a macOS LaunchAgent beside the installed Pi package extension (`extensions/telegram-mirror.ts`).
+It is a private Python bot (`${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py`) running as a WSL systemd user service or a macOS LaunchAgent beside the installed Pi package extension (`extensions/telegram-mirror.ts`).
 The bot supports Linux/WSL and macOS hosts only.
 
 Telegram text reaches Pi exactly as terminal text: no origin marker, no hidden provenance, and no Telegram-specific instruction.
@@ -9,6 +9,8 @@ Telegram input therefore carries the same authority as anything typed in the ter
 The bot never starts Pi, never creates a second session, and contains no model or agent loop.
 
 ## Setup
+
+Set `PI_TELEGRAM_PACKAGE` to the installed package directory before running the commands below (for example, `/installed/package`).
 
 1. Create a bot with Telegram's `@BotFather` and copy its token.
 2. Store the token privately (this file is never read by the service unit):
@@ -22,7 +24,7 @@ The bot never starts Pi, never creates a second session, and contains no model o
 3. Pair one account and one private chat, then message the bot from that account:
 
    ```sh
-   bin/pi-telegram.py pair
+   ${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py pair
    ```
 
    The pairing identifiers land in `~/.pi-telegram/config.json`.
@@ -33,15 +35,15 @@ The bot never starts Pi, never creates a second session, and contains no model o
    ```sh
    brew install ffmpeg uv
    uv tool install 'parakeet-mlx==0.5.2'
-   bin/pi-parakeet-mlx-transcribe.py --help
+   ${PI_TELEGRAM_PACKAGE}/bin/pi-parakeet-mlx-transcribe.py --help
    ```
 
-   The macOS default is the Pi-owned `bin/pi-parakeet-mlx-transcribe.py` adapter.
+   The macOS default is the Pi-owned `${PI_TELEGRAM_PACKAGE}/bin/pi-parakeet-mlx-transcribe.py` adapter.
    It invokes `parakeet-mlx==0.5.2` with the public `mlx-community/parakeet-tdt-0.6b-v3` model, reads its private `.txt` output, and prints only transcript text.
    Prewarm the model before relying on the 180-second voice-note bound, because its first Hugging Face download may take longer:
 
    ```sh
-   bin/pi-parakeet-mlx-transcribe.py /path/to/short-test-audio.m4a
+   ${PI_TELEGRAM_PACKAGE}/bin/pi-parakeet-mlx-transcribe.py /path/to/short-test-audio.m4a
    ```
 
    Do not configure a Hugging Face token for the bot or service.
@@ -55,8 +57,8 @@ The bot never starts Pi, never creates a second session, and contains no model o
 6. Install the owner-scoped user service so the bot starts with your user session:
 
    ```sh
-   bin/pi-telegram.py install-service
-   bin/pi-telegram.py status
+   ${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py install-service
+   ${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py status
    ```
 
    On WSL this writes `~/.config/systemd/user/pi-telegram.service`.
@@ -64,8 +66,8 @@ The bot never starts Pi, never creates a second session, and contains no model o
    On macOS this writes `~/Library/LaunchAgents/com.pi.telegram.plist` and starts it with `launchctl` in your GUI user domain.
    A LaunchAgent may be denied access when the repository is under a privacy-protected Documents location; use a normal development directory or the documented foreground process rather than granting broad access silently.
    The plist contains only the private directory and Pi home paths, never the Telegram token.
-   `bin/pi-telegram.py service-unit` prints the current platform's unit without installing it.
-   `bin/pi-telegram.py uninstall-service` stops and removes the service and is safe to repeat.
+   `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py service-unit` prints the current platform's unit without installing it.
+   `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py uninstall-service` stops and removes the service and is safe to repeat.
    After changing the script or extension, run `uninstall-service` followed by `install-service` to restart the service.
 
 The Pi half is loaded by Pi's package manager from the installed package manifest; no project-local extension directory is required.
@@ -254,11 +256,11 @@ Every button action is bound to the current transcript revision, so a stale or r
 - The service unit holds no token and no message content; the token stays in `~/.pi-telegram/env` and pairing stays in `config.json`.
 - Temporary voice audio is owner-only and is deleted after send, cancel, failure, and at bot start and stop; images are never written to disk at all.
 - Transcription memory belongs to the local speech model rather than the bot process, and the service's memory accounting includes the transcriber and its children.
-- `PI_TELEGRAM_DIR` moves the private directory; `bin/pi-telegram.py --help` owns the remaining flags and environment.
+- `PI_TELEGRAM_DIR` moves the private directory; `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py --help` owns the remaining flags and environment.
 - If macOS reports a missing dependency, check `command -v ffmpeg`, `command -v parakeet-mlx`, and the service PATH; rerun the adapter in the foreground to diagnose model download failures.
 - A timeout usually means the model was not prewarmed or the Mac is memory constrained; retry after prewarming and close other memory-heavy applications.
 
-The wire protocol between the bot and the Pi extension is stated once in `bin/pi-telegram.py`'s header.
+The wire protocol between the bot and the Pi extension is stated once in `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py`'s header.
 
 Regression entry points:
 
