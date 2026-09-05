@@ -52,6 +52,8 @@ export const readCodexQuota: QuotaReader = () => new Promise((resolve, reject) =
     if (error) reject(error); else resolve(value!);
   };
   child.on("error", () => finish(new Error("Codex quota unavailable")));
+  child.on("close", () => finish(new Error("Codex quota unavailable")));
+  child.stdin.on("error", () => finish(new Error("Codex quota unavailable")));
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
     buffer += chunk;
