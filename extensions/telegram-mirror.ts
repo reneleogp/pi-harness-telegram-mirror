@@ -173,6 +173,7 @@ function transcribeMigrationVoice(path: string): Promise<string> {
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
     let forceTimer: ReturnType<typeof setTimeout> | undefined;
     const terminate = (signal: "SIGTERM" | "SIGKILL"): void => {
       try {
@@ -191,6 +192,7 @@ function transcribeMigrationVoice(path: string): Promise<string> {
       else resolve(transcript as string);
     };
     const timer = setTimeout(() => {
+      timedOut = true;
       terminate("SIGTERM");
       forceTimer = setTimeout(() => {
         terminate("SIGKILL");
@@ -206,8 +208,11 @@ function transcribeMigrationVoice(path: string): Promise<string> {
     child.stderr.on("data", (chunk: Buffer) => {
       if (Buffer.byteLength(stderr, "utf8") < 4096) stderr += chunk.toString("utf8");
     });
-    child.on("error", (error) => finish(error));
+    child.on("error", (error) => {
+      if (!timedOut) finish(error);
+    });
     child.on("close", (code) => {
+      if (timedOut) return;
       if (code !== 0) finish(new Error(stderr.trim().slice(0, 240) || `adapter exited ${code}`));
       else if (!stdout.trim()) finish(new Error("adapter produced no transcript"));
       else finish(undefined, stdout.trim());
@@ -580,7 +585,8 @@ export default function (pi: ExtensionAPI) {
     if (frame.t === "migration_verify" && typeof frame.nonce === "string") {
       const image = asQueuedImage(frame.image);
       const voice = asMigrationVoice(frame.voice);
-      const text = typeof frame.text === "string" && frame.text === `migration-text:${frame.nonce}`;
+      const text = typeof frame.text === "string" && frame.text.trim() !== "" &&
+        frame.text.length <= 3800;
       if (text && image && voice) {
         deliveries = deliveries.then(async () => {
           await pi.sendUserMessage(frame.text as string, { deliverAs: "steer" });
