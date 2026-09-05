@@ -10,7 +10,7 @@ pi update git:github.com/reneleogp/pi-harness-telegram-mirror@v1
 pi remove git:github.com/reneleogp/pi-harness-telegram-mirror
 ```
 
-The install command uses an immutable release commit; update it only when intentionally selecting a different reviewed commit. The published `v1` tag is the stable install target.
+The install command targets the reviewed `v1` release; update it only when intentionally selecting a different reviewed release. The published `v1` tag is the stable install target.
 
 `package.json` is a Pi manifest (`pi-package`) and loads `extensions/telegram-mirror.ts`. Python runs from this stable installed package location and uses the standard library; `mistune` is optional for formatting.
 
@@ -72,7 +72,7 @@ After installing and connecting Pi, run:
 python3 /installed/package/bin/pi-telegram.py migrate
 ```
 
-It validates and copies token, pairing, and settings from the legacy configuration into `~/.pi-telegram` without printing secrets or deleting or mutating the old directory. Retry is idempotent. After installation, the operator must perform one real text, image, and voice smoke test through Pi before retiring the legacy setup. The legacy path exists only in this explicit migration operation, not normal runtime.
+It validates and copies token, pairing, and settings from the legacy `~/.firstmate-telegram` configuration into `~/.pi-telegram` without printing secrets or deleting or mutating the old directory. Retry is idempotent. After installation, the operator must perform one real text, image, and voice smoke test through Pi before retiring the legacy setup. The legacy path exists only in this explicit migration operation, not normal runtime.
 
 ## Troubleshooting, privacy, limitations
 

@@ -1,6 +1,6 @@
 // Pi Telegram terminal mirror bridge for Pi.
 //
-// This extension is the Pi half of the macOS Telegram mirror. bin/pi-telegram.py
+// This extension is the Pi half of the Linux/macOS Telegram mirror. bin/pi-telegram.py
 // owns Telegram, pairing, mirror mode, the in-memory inbound queue, voice
 // transcription, and every Telegram reply. This half only:
 //

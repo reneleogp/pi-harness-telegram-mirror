@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""pi-telegram.py - Pi's Telegram terminal mirror bot (macOS).
+"""pi-telegram.py - Pi's Telegram terminal mirror bot (Linux/macOS).
 
 One private Telegram bot that mirrors the one Pi terminal conversation
-in both directions. It runs beside Pi as a macOS LaunchAgent and talks to the
-installed Pi package extension over one local Unix socket. The bot contains no
-model, agent loop, or Pi reasoning.
+in both directions. It runs beside Pi as a Linux systemd user service or macOS
+LaunchAgent and talks to the installed Pi package extension over one local Unix
+socket. The bot contains no model, agent loop, or Pi reasoning.
 
 Layout (one private directory, owner-only, default ~/.pi-telegram,
 overridden by PI_TELEGRAM_DIR):
@@ -74,8 +74,8 @@ Usage:
   pi-telegram.py run                run the bot in the foreground (the service)
   pi-telegram.py pair               record the first private sender as the pair
   pi-telegram.py status             print pairing, service, and socket status
-  pi-telegram.py service-unit       print the macOS LaunchAgent plist
-  pi-telegram.py install-service    install and start the macOS user service
+  pi-telegram.py service-unit       print the native user-service definition
+  pi-telegram.py install-service    install and start the Linux/macOS user service
   pi-telegram.py uninstall-service  stop and remove that user service
 
 Environment:
