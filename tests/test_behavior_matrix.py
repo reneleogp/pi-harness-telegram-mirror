@@ -116,5 +116,3 @@ def test_image_contract_rejects_invalid_bytes_and_accepts_real_png():
     png = __import__("base64").b64encode(bytes([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) + b"rest").decode()
     accepted, refused = bot.accept_outbound_images([{"mime": "image/png", "data": png}])
     assert len(accepted) == 1 and refused == 0
-
-
