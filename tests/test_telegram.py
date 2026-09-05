@@ -177,15 +177,19 @@ def test_fake_telegram_transport_executes_api_request():
 
 
 def test_service_definition_contains_runtime_path(tmp_path):
+    import plistlib
+
     bot = load_bot()
     original = bot.on_macos
     bot.on_macos = lambda: True
     try:
-        service = bot.unit_text(tmp_path)
+        service = plistlib.loads(bot.unit_text(tmp_path).encode())
     finally:
         bot.on_macos = original
-    assert str(Path.home() / ".local" / "bin") in service
-    assert str(tmp_path) in service
+    assert service["ProgramArguments"][1] == str(Path(bot.__file__).resolve())
+    assert service["ProgramArguments"][2] == "run"
+    assert service["EnvironmentVariables"]["PI_TELEGRAM_DIR"] == str(tmp_path)
+    assert str(Path.home() / ".local" / "bin") in service["EnvironmentVariables"]["PATH"]
 
 
 def test_real_unix_socket_delivers_protocol_state(tmp_path):
