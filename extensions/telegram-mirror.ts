@@ -1,6 +1,6 @@
 // Pi Telegram terminal mirror bridge for Pi.
 //
-// This extension is the Pi half of the macOS Telegram mirror. bin/pi-telegram.py
+// This extension is the Pi half of the WSL and macOS Telegram mirror. bin/pi-telegram.py
 // owns Telegram, pairing, mirror mode, the in-memory inbound queue, voice
 // transcription, and every Telegram reply. This half only:
 //
@@ -18,20 +18,16 @@
 // extension is the client, because the bot outlives every Pi session. The wire
 // protocol is stated once in that script's header.
 import { spawnSync } from "node:child_process";
-import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import {
   closeSync,
   constants as fsConstants,
   existsSync,
   fstatSync,
-  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   readSync,
-  renameSync,
-  fsyncSync,
   writeFileSync,
 } from "node:fs";
 import { connect, type Socket } from "node:net";
@@ -40,7 +36,6 @@ import { basename, dirname, join } from "node:path";
 import { getSettingsListTheme, type ExtensionAPI, type ExtensionContext }
   from "@earendil-works/pi-coding-agent";
 import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
-import { sendTelegramDelivery, type QueuedImage } from "./telegram-delivery.ts";
 
 type BotFrame = {
   t?: string;
@@ -49,11 +44,9 @@ type BotFrame = {
   image?: unknown;
   mirror?: unknown;
   confirmations?: unknown;
-  nonce?: unknown;
-  voice?: unknown;
 };
 
-type MigrationVoice = { path: string };
+type QueuedImage = { data: string; mime: string };
 
 type AssistantPart = { type?: unknown; text?: unknown };
 type FinalizedMessage = {
@@ -115,10 +108,7 @@ function claim(cwd: string): boolean {
 
 function readDisplayStatus(): boolean {
   try {
-    const target = join(botHome(), DISPLAY_SETTING_FILE);
-    const stat = lstatSync(target);
-    if (stat.isSymbolicLink() || !stat.isFile() || (stat.mode & 0o077) !== 0) return true;
-    return readFileSync(target, "utf8").trim() !== "off";
+    return readFileSync(join(botHome(), DISPLAY_SETTING_FILE), "utf8").trim() !== "off";
   } catch {
     return true;
   }
@@ -127,19 +117,8 @@ function readDisplayStatus(): boolean {
 function writeDisplayStatus(shown: boolean): void {
   try {
     const home = botHome();
-    if (existsSync(home) && lstatSync(home).isSymbolicLink()) throw new Error("state directory is a symlink");
     if (!existsSync(home)) mkdirSync(home, { recursive: true, mode: 0o700 });
-    const target = join(home, DISPLAY_SETTING_FILE);
-    if (existsSync(target) && lstatSync(target).isSymbolicLink()) throw new Error("state file is a symlink");
-    const temporary = join(home, `.${DISPLAY_SETTING_FILE}.${process.pid}.${Date.now()}`);
-    const fd = openSync(temporary, "wx", 0o600);
-    try {
-      writeFileSync(fd, shown ? "on\n" : "off\n");
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    renameSync(temporary, target);
+    writeFileSync(join(home, DISPLAY_SETTING_FILE), shown ? "on\n" : "off\n", { mode: 0o600 });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error(`pi-telegram-mirror: could not persist the status display choice: ${detail}`);
@@ -170,10 +149,7 @@ const MAX_CLIPBOARD_TOTAL_BYTES = MAX_CLIPBOARD_BYTES * 3;
 const MAX_CLIPBOARD_IMAGES = 10;
 const MAX_OUTSTANDING_IMAGE_WRITE_BYTES = positiveInteger(
   "PI_TELEGRAM_MAX_OUTSTANDING_WRITE_BYTES",
-  Math.ceil(MAX_CLIPBOARD_TOTAL_BYTES / 3) * 4 + 4 * 1024 * 1024,
-);
-const MAX_FRAME_BYTES = positiveInteger(
-  "PI_TELEGRAM_MAX_FRAME_BYTES", MAX_OUTSTANDING_IMAGE_WRITE_BYTES,
+  Math.ceil(MAX_CLIPBOARD_TOTAL_BYTES / 3) * 4 + 3 * 1024 * 1024,
 );
 
 function imageMimeFromMagic(bytes: Buffer): string | undefined {
@@ -406,7 +382,6 @@ export default function (pi: ExtensionAPI) {
   // may do. Idempotent, because it runs on every session start and again when a
   // pending lock finally names this session.
   function startBridge(): void {
-    if (!owned) return;
     registerCommands();
     displayStatus = readDisplayStatus();
     refreshFooter();
@@ -417,21 +392,17 @@ export default function (pi: ExtensionAPI) {
     const target = socket;
     if (!target || target.destroyed) return false;
     const payload = `${JSON.stringify(frame)}\n`;
-    const frameBytes = Buffer.byteLength(payload);
-    if (frameBytes > MAX_FRAME_BYTES ||
-        frameBytes > MAX_OUTSTANDING_IMAGE_WRITE_BYTES ||
-        outstandingImageWriteBytes + frameBytes > MAX_OUTSTANDING_IMAGE_WRITE_BYTES) {
-      activeCtx?.ui.notify("Telegram mirror refused an oversized frame.", "warning");
-      return false;
-    }
-    outstandingImageWriteBytes += frameBytes;
+    const imageBytes = Array.isArray(frame.images) ? Buffer.byteLength(payload) : 0;
+    if (imageBytes > MAX_OUTSTANDING_IMAGE_WRITE_BYTES ||
+        outstandingImageWriteBytes + imageBytes > MAX_OUTSTANDING_IMAGE_WRITE_BYTES) return false;
+    outstandingImageWriteBytes += imageBytes;
     try {
       target.write(payload, () => {
-        if (socket === target) outstandingImageWriteBytes -= frameBytes;
+        if (socket === target) outstandingImageWriteBytes -= imageBytes;
       });
       return true;
     } catch {
-      outstandingImageWriteBytes -= frameBytes;
+      outstandingImageWriteBytes -= imageBytes;
       return false;
     }
   }
@@ -464,7 +435,6 @@ export default function (pi: ExtensionAPI) {
   function openSocket(): void {
     if (stopped || socket) return;
     const client = connect(socketPath);
-    const decoder = new StringDecoder("utf8");
     socket = client;
     client.on("connect", () => {
       reconnectDelay = RECONNECT_MS;
@@ -475,11 +445,7 @@ export default function (pi: ExtensionAPI) {
       write({ t: "hello", features: ["image"] });
     });
     client.on("data", (chunk: Buffer) => {
-      buffer += decoder.write(chunk);
-      if (Buffer.byteLength(buffer, "utf8") > MAX_FRAME_BYTES) {
-        drop();
-        return;
-      }
+      buffer += chunk.toString("utf8");
       let index = buffer.indexOf("\n");
       while (index >= 0) {
         const line = buffer.slice(0, index);
@@ -487,7 +453,6 @@ export default function (pi: ExtensionAPI) {
         if (line.trim()) handleFrame(line);
         index = buffer.indexOf("\n");
       }
-      if (Buffer.byteLength(buffer, "utf8") > MAX_FRAME_BYTES) drop();
     });
     const drop = (): void => {
       if (socket !== client) return;
@@ -536,17 +501,19 @@ export default function (pi: ExtensionAPI) {
   // receives exactly what pasting it into the terminal would send.
   function queueDelivery(id: string, text: string, image?: QueuedImage): void {
     deliveries = deliveries.then(async () => {
-      await sendTelegramDelivery(
-        (content, options) => pi.sendUserMessage(content as never, options),
-        activeCtx?.isIdle === true,
-        text,
-        image,
-      );
+      if (image) {
+        const content = [
+          { type: "text", text: text.trim() ? `${text}\n\n${IMAGE_MARKER}` : IMAGE_MARKER },
+          { type: "image", data: image.data, mimeType: image.mime },
+        ];
+        await pi.sendUserMessage(content as never, { deliverAs: "steer" });
+      } else {
+        await pi.sendUserMessage(text, { deliverAs: "steer" });
+      }
       write({ t: "accepted", id });
     }).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       console.error(`pi-telegram-mirror: could not submit a Telegram message: ${detail}`);
-      write({ t: "rejected", id });
     });
   }
 
@@ -574,37 +541,18 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
-  function retryOwnership(ctx: ExtensionContext): void {
-    if (stopped || owned || lockWaitTimer || lockWaitAttempts >= LOCK_WAIT_ATTEMPTS) return;
-    lockWaitAttempts += 1;
-    lockWaitTimer = setTimeout(() => {
-      lockWaitTimer = null;
-      if (claim(ctx.cwd)) {
-        owned = true;
-        startBridge();
-      } else {
-        retryOwnership(ctx);
-      }
-    }, LOCK_WAIT_MS);
-    lockWaitTimer.unref?.();
-  }
-
   pi.on?.("session_start", (_event, ctx) => {
     activeCtx = ctx;
     stopped = false;
     reconnectDelay = RECONNECT_MS;
-    lockWaitAttempts = 0;
     owned = claim(ctx.cwd);
     if (owned) startBridge();
-    else retryOwnership(ctx);
   });
 
   pi.on?.("session_shutdown", () => {
     stopped = true;
     if (reconnectTimer) clearTimeout(reconnectTimer);
-    if (lockWaitTimer) clearTimeout(lockWaitTimer);
     reconnectTimer = null;
-    lockWaitTimer = null;
     closeSocket();
     connected = false;
     activeCtx?.ui?.setStatus?.(FOOTER_KEY, undefined);

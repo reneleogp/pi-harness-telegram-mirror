@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""pi-telegram.py - Pi's Telegram terminal mirror bot (macOS).
+"""pi-telegram.py - Pi's Telegram terminal mirror bot (WSL and macOS).
 
 One private Telegram bot that mirrors the one Pi terminal conversation
-in both directions. It runs beside Pi as a macOS LaunchAgent and talks to the
-installed Pi package extension over one local Unix socket. The bot contains no
-model, agent loop, or Pi reasoning.
+in both directions. It runs beside Pi as a WSL systemd user service or a macOS
+LaunchAgent and talks to the
+tracked Pi extension .pi/extensions/pi-telegram-mirror.ts over one local Unix
+socket. The bot contains no model, agent loop, or Pi reasoning.
 
 Layout (one private directory, owner-only, default ~/.pi-telegram,
 overridden by PI_TELEGRAM_DIR):
@@ -30,7 +31,6 @@ Wire protocol (newline-delimited JSON, both directions):
                     {"t":"command","id":N,"command":"toggle"|"on"|"off"|"status"}
                     {"t":"set","setting":"confirmations","value":bool}
                     {"t":"accepted","id":"..."}     Pi accepted that message
-                    {"t":"rejected","id":"..."}     Pi could not accept it
   bot -> extension  {"t":"deliver","id":"...","text":...,"image":{...}}
                     {"t":"command_result","id":N|null,"text":...}
                     {"t":"state","mirror":bool,"confirmations":bool}
@@ -74,13 +74,14 @@ Usage:
   pi-telegram.py run                run the bot in the foreground (the service)
   pi-telegram.py pair               record the first private sender as the pair
   pi-telegram.py status             print pairing, service, and socket status
-  pi-telegram.py service-unit       print the macOS LaunchAgent plist
-  pi-telegram.py install-service    install and start the macOS user service
+  pi-telegram.py service-unit       print the systemd unit or LaunchAgent plist
+  pi-telegram.py install-service    install and start the WSL or macOS user service
   pi-telegram.py uninstall-service  stop and remove that user service
 
 Environment:
   PI_TELEGRAM_DIR        private directory (default ~/.pi-telegram)
   PI_TELEGRAM_API_BASE   Telegram API base URL (tests point this at a fake)
+  PI_TELEGRAM_ASSUME_WSL 1 or 0 to force the WSL verdict for service commands
 """
 
 from __future__ import annotations
@@ -97,7 +98,6 @@ import platform
 import plistlib
 import secrets
 import shlex
-import shutil
 import signal
 import socket
 import struct
@@ -112,7 +112,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from html import escape
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 try:  # Debian/Ubuntu: python3-mistune
     import mistune
@@ -128,16 +128,14 @@ MACOS_TRANSCRIBE_ADAPTER = str(Path(__file__).resolve().with_name("pi-parakeet-m
 
 
 def default_transcribe_command() -> str:
-    """Use the package-owned MLX adapter on macOS."""
-    if platform.system() == "Darwin":
+    """Use the owned MLX adapter on macOS; retain the historical WSL default."""
+    if platform.system() == "Darwin" and not os.environ.get("WSL_DISTRO_NAME"):
         return MACOS_TRANSCRIBE_ADAPTER
     return DEFAULT_TRANSCRIBE_COMMAND
 
 MIRROR_OFF_REPLY = "Telegram mirror is off. Send /telegram_on to enable it."
 OFFLINE_REPLY = "Pi is not running. Your message is queued until it starts."
 ACCEPTED_REPLY = "Pi · Sent to Pi."
-DELIVERY_RETRY_REPLY = "Pi could not accept that message; retrying once."
-DELIVERY_FAILED_REPLY = "Pi could not accept that message after one retry; it was dropped."
 TRANSCRIBING_REPLY = "Transcribing…"
 TERMINAL_LABEL = "You · Terminal"
 SENT_FOOTER = "Sent to Pi"
@@ -236,26 +234,19 @@ def log(message: str) -> None:
 
 
 def private_dir(path: Path) -> Path:
-    if path.is_symlink():
-        raise TelegramError(f"refusing symlink state directory {path}")
+    path.mkdir(parents=True, exist_ok=True)
     try:
-        path.mkdir(parents=True, exist_ok=True)
-        if not path.is_dir():
-            raise TelegramError(f"state path is not a directory: {path}")
         path.chmod(0o700)
-        stat = path.stat()
-    except OSError as exc:
-        raise TelegramError(f"could not secure state directory {path}: {exc}") from exc
-    uid = getattr(os, "getuid", None)
-    if uid is None or stat.st_uid != uid() or stat.st_mode & 0o077:
-        raise TelegramError(f"state directory is not owner-private: {path}")
+    except OSError:
+        pass
     return path
 
 
 def home_dir() -> Path:
     value = os.environ.get("PI_TELEGRAM_DIR")
-    path = Path(value).expanduser() if value else Path.home() / ".pi-telegram"
-    return Path(os.path.abspath(os.fspath(path)))
+    if value:
+        return Path(value).expanduser()
+    return Path.home() / ".pi-telegram"
 
 
 def env_file(home: Path) -> Path:
@@ -277,10 +268,6 @@ def audio_dir(home: Path) -> Path:
 def read_env(home: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     try:
-        stat = env_file(home).lstat()
-        if (stat.st_mode & 0o170000 != 0o100000 or stat.st_mode & 0o077 or
-                stat.st_uid != getattr(os, "getuid", lambda: -1)()):
-            return values
         raw = env_file(home).read_text(encoding="utf-8")
     except OSError:
         return values
@@ -295,45 +282,17 @@ def read_env(home: Path) -> dict[str, str]:
 
 def read_config(home: Path) -> dict[str, Any]:
     try:
-        target = config_file(home)
-        stat = target.lstat()
-        if (stat.st_mode & 0o170000 != 0o100000 or stat.st_mode & 0o077 or
-                stat.st_uid != getattr(os, "getuid", lambda: -1)()):
-            return {}
-        data = json.loads(target.read_text(encoding="utf-8"))
+        data = json.loads(config_file(home).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
 
 
-def write_private_file(target: Path, content: Union[str, bytes]) -> None:
-    private_dir(target.parent)
-    try:
-        if target.is_symlink():
-            raise TelegramError(f"refusing symlink state file {target}")
-        target.lstat()
-    except FileNotFoundError:
-        pass
-    temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        mode = "wb" if isinstance(content, bytes) else "w"
-        kwargs = {} if mode == "wb" else {"encoding": "utf-8"}
-        with os.fdopen(descriptor, mode, **kwargs) as stream:
-            descriptor = -1
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, target)
-    except Exception:
-        if descriptor >= 0:
-            os.close(descriptor)
-        remove_file(temporary)
-        raise
-
-
 def write_config(home: Path, data: dict[str, Any]) -> None:
-    write_private_file(config_file(home), json.dumps(data, indent=2, sort_keys=True) + "\n")
+    private_dir(home)
+    target = config_file(home)
+    target.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    target.chmod(0o600)
 
 
 @dataclass
@@ -347,12 +306,8 @@ class Config:
     confirmations: bool = True
 
 
-def valid_telegram_id(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
-
-
 def load_config(home: Path) -> Config:
-    token = read_env(home).get("TELEGRAM_BOT_TOKEN", "")
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or read_env(home).get("TELEGRAM_BOT_TOKEN", "")
     if not token:
         raise TelegramError(
             f"no TELEGRAM_BOT_TOKEN in {env_file(home)}; add it as TELEGRAM_BOT_TOKEN=<token>"
@@ -360,7 +315,7 @@ def load_config(home: Path) -> Config:
     data = read_config(home)
     user_id = data.get("user_id")
     chat_id = data.get("chat_id")
-    if not valid_telegram_id(user_id) or not valid_telegram_id(chat_id):
+    if not isinstance(user_id, int) or not isinstance(chat_id, int):
         raise TelegramError(
             f"no pairing in {config_file(home)}; run pi-telegram.py pair and message the bot"
         )
@@ -455,7 +410,8 @@ class TelegramApi:
         return await asyncio.to_thread(self.request_sync, method, params or {}, timeout)
 
     def _download(self, file_path: str, target: Path, timeout: float) -> None:
-        write_private_file(target, self._fetch(file_path, MAX_VOICE_BYTES, timeout))
+        target.write_bytes(self._fetch(file_path, MAX_VOICE_BYTES, timeout))
+        target.chmod(0o600)
 
     def _fetch(self, file_path: str, limit: int, timeout: float) -> bytes:
         url = f"{self._base}/file/bot{self._token}/{file_path}"
@@ -485,7 +441,6 @@ class Queued:
     reply_to: int
     image: Optional[dict[str, str]] = None
     image_bytes: int = 0
-    rejection_retries: int = 0
 
 
 @dataclass
@@ -511,7 +466,6 @@ class MirrorBot:
     prompts: dict[int, int] = field(default_factory=dict)
     client: Optional[asyncio.StreamWriter] = None
     client_features: set = field(default_factory=set)
-    client_ready: bool = True
     background: set = field(default_factory=set)
     transcribers: set = field(default_factory=set)
     active_transcription: bool = False
@@ -771,21 +725,18 @@ class MirrorBot:
 
     async def accept_text(self, text: str, reply_to: int,
                           image: Optional[dict[str, str]] = None,
-                          image_bytes: int = 0) -> Optional[str]:
+                          image_bytes: int = 0) -> None:
         item = Queued(id=self.next_id(), text=text, reply_to=reply_to,
                       image=image, image_bytes=image_bytes)
         self.queue.append(item)
         if not self.connected:
             await self.send(OFFLINE_REPLY, reply_to=reply_to)
         await self.pump()
-        return item.id
 
     def queued_image_bytes(self) -> int:
         return sum(item.image_bytes for item in (*self.queue, *self.pending.values()))
 
     async def pump(self) -> None:
-        if self.client is not None and not self.client_ready:
-            return
         while self.queue and self.client is not None:
             item = self.queue.popleft()
             if item.image and "image" not in self.client_features:
@@ -798,33 +749,20 @@ class MirrorBot:
             frame: dict[str, Any] = {"t": "deliver", "id": item.id, "text": item.text}
             if item.image:
                 frame["image"] = item.image
-            self.pending[item.id] = item
             if not await self.write_frame(frame):
-                if self.pending.pop(item.id, None) is not None:
-                    self.queue.appendleft(item)
+                self.queue.appendleft(item)
                 return
+            self.pending[item.id] = item
 
     async def on_accepted(self, message_id: str) -> None:
         item = self.pending.pop(message_id, None)
         if item is None:
             return
         # Pending state clears either way: the message reached Pi, so it must
-        # never be re-delivered.
+        # never be re-delivered. Only the visible receipt is optional.
         if not self.config.confirmations:
             return
         await self.send(ACCEPTED_REPLY, reply_to=item.reply_to)
-
-    async def on_rejected(self, message_id: str) -> None:
-        item = self.pending.pop(message_id, None)
-        if item is None:
-            return
-        if item.rejection_retries >= 1:
-            await self.send(DELIVERY_FAILED_REPLY, reply_to=item.reply_to)
-            return
-        item.rejection_retries += 1
-        self.queue.appendleft(item)
-        await self.send(DELIVERY_RETRY_REPLY, reply_to=item.reply_to)
-        await self.pump()
 
     # --- voice ---
 
@@ -1013,7 +951,7 @@ class MirrorBot:
         # so. Refuse visibly instead of delivering something that vanishes.
         # While no session is connected the capability is simply unknown, so the
         # image queues like any other message and pump() decides on delivery.
-        if self.connected and self.client_ready and "image" not in self.client_features:
+        if self.connected and "image" not in self.client_features:
             log("refusing an image: the connected Pi session has no image support")
             await self.send(IMAGE_UNSUPPORTED_SESSION_REPLY, reply_to=message_id)
             return
@@ -1064,7 +1002,6 @@ class MirrorBot:
             return
         self.client = None
         self.client_features = set()
-        self.client_ready = False
         # Anything delivered but not yet confirmed goes back to the front of the
         # queue in order. A session that vanished between accepting a message
         # and confirming it can therefore see that one message twice, which is
@@ -1096,7 +1033,6 @@ class MirrorBot:
             return
         self.client = writer
         self.client_features = set()
-        self.client_ready = False
         log(f"mirroring for {peer_description(writer)}")
         await self.broadcast_state()
         # The queue drains once hello names what this session can render.
@@ -1129,15 +1065,11 @@ class MirrorBot:
             self.client_features = {
                 str(name) for name in features if isinstance(name, str)
             } if isinstance(features, list) else set()
-            self.client_ready = True
             # State already went out when the connection was accepted.
             await self.pump()
             return
         if kind == "accepted":
             await self.on_accepted(str(frame.get("id")))
-            return
-        if kind == "rejected":
-            await self.on_rejected(str(frame.get("id")))
             return
         if kind == "terminal":
             if self.mirror_on and isinstance(frame.get("text"), str):
@@ -1213,7 +1145,6 @@ class MirrorBot:
     async def run(self) -> None:
         path = socket_path(self.config.home)
         private_dir(self.config.home)
-        private_dir(audio_dir(self.config.home))
         clear_audio(self.config.home)
         remove_file(path)
         server = await asyncio.start_unix_server(self.handle_client, path=str(path),
@@ -1257,7 +1188,6 @@ class MirrorBot:
                 task.cancel()
             await asyncio.wait(tasks, timeout=STOP_GRACE_SECONDS)
             remove_file(path)
-            private_dir(audio_dir(self.config.home))
             clear_audio(self.config.home)
             log("stopped")
             sys.stderr.flush()
@@ -1612,7 +1542,7 @@ def sniff_image_mime(data: bytes) -> Optional[str]:
         return "image/png"
     if data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
-    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
     return None
 
@@ -1787,15 +1717,11 @@ def remove_file(path: Optional[Path]) -> None:
 
 def clear_audio(home: Path) -> None:
     directory = audio_dir(home)
-    if directory.is_symlink() or not directory.is_dir():
+    if not directory.is_dir():
         return
     for entry in directory.iterdir():
-        try:
-            stat = entry.lstat()
-            if stat.st_mode & 0o170000 == 0o100000:
-                remove_file(entry)
-        except OSError:
-            continue
+        if entry.is_file():
+            remove_file(entry)
 
 
 def transcribe_argv(command: str, audio: Path) -> list[str]:
@@ -1811,49 +1737,28 @@ def run_transcribe(command: str, audio: Path, register: Optional[Any] = None) ->
     argv = transcribe_argv(command, audio)
     try:
         process = subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             # Its own process group: a transcriber is usually a wrapper script
             # driving heavier children, and signalling only the wrapper leaves
             # those children alive holding this pipe open.
             start_new_session=True,
         )
-        process._pi_process_group = os.getpgid(process.pid)
     except (OSError, ValueError) as exc:
         raise TelegramError(f"transcription command failed: {exc}") from exc
     # Published before the wait so a stopping bot can end this child instead of
     # blocking on it: a local speech model can hold the CPU for minutes.
     if register is not None:
         register(process)
-    captured: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
-
-    def drain(name: str, stream: Any, limit: int) -> None:
-        while True:
-            chunk = stream.read(65536)
-            if not chunk:
-                return
-            remaining = limit - len(captured[name])
-            if remaining > 0:
-                captured[name].extend(chunk[:remaining])
-
-    readers = [threading.Thread(target=drain, args=("stdout", process.stdout, 1_048_576)),
-               threading.Thread(target=drain, args=("stderr", process.stderr, 4096))]
-    for reader in readers:
-        reader.start()
     try:
-        process.wait(timeout=TRANSCRIBE_TIMEOUT)
+        stdout, stderr = process.communicate(timeout=TRANSCRIBE_TIMEOUT)
     except subprocess.TimeoutExpired:
         end_process_group(process)
-        process.wait()
-        for reader in readers:
-            reader.join()
+        process.communicate()
         raise TelegramError("transcription timed out") from None
-    end_process_group(process)
-    for reader in readers:
-        reader.join()
     if process.returncode != 0:
-        detail = bytes(captured["stderr"]).decode("utf-8", "replace").strip()[:200]
+        detail = (stderr or "").strip()[:200]
         raise TelegramError(f"transcription command exited {process.returncode}: {detail}")
-    transcript = bytes(captured["stdout"]).decode("utf-8", "replace").strip()
+    transcript = (stdout or "").strip()
     if not transcript:
         raise TelegramError("transcription produced no text")
     return transcript
@@ -1861,35 +1766,31 @@ def run_transcribe(command: str, audio: Path, register: Optional[Any] = None) ->
 
 def end_process_group(process: Any) -> None:
     """Stop a transcriber and everything it started, then stop waiting."""
-    try:
-        group = getattr(process, "_pi_process_group", None) or os.getpgid(process.pid)
-    except (OSError, ProcessLookupError, AttributeError):
-        group = None
-    if group is not None and group != os.getpgrp():
+    for signal_name in (signal.SIGTERM, signal.SIGKILL):
+        if process.poll() is not None:
+            return
         try:
-            os.killpg(group, signal.SIGTERM)
+            group = os.getpgid(process.pid)
         except (OSError, ProcessLookupError):
-            pass
+            group = None
+        # Only ever signal a group the child leads. A transcriber that failed to
+        # get its own session shares ours, and signalling that group would take
+        # down this service with it.
+        if group is not None and group != os.getpgrp():
+            try:
+                os.killpg(group, signal_name)
+            except (OSError, ProcessLookupError):
+                pass
+        else:
+            try:
+                process.send_signal(signal_name)
+            except (OSError, ValueError, ProcessLookupError):
+                return
         try:
             process.wait(timeout=TRANSCRIBE_STOP_GRACE)
+            return
         except subprocess.TimeoutExpired:
-            pass
-        try:
-            os.killpg(group, signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            pass
-        return
-    try:
-        process.send_signal(signal.SIGTERM)
-    except (OSError, ValueError, ProcessLookupError):
-        return
-    try:
-        process.wait(timeout=TRANSCRIBE_STOP_GRACE)
-    except subprocess.TimeoutExpired:
-        try:
-            process.send_signal(signal.SIGKILL)
-        except (OSError, ValueError, ProcessLookupError):
-            pass
+            continue
 
 
 async def transcribe(command: str, audio: Path, register: Optional[Any] = None) -> str:
@@ -1899,35 +1800,72 @@ async def transcribe(command: str, audio: Path, register: Optional[Any] = None) 
 # --- service and CLI --------------------------------------------------------
 
 
+def is_wsl() -> bool:
+    assume = os.environ.get("PI_TELEGRAM_ASSUME_WSL")
+    if assume in ("0", "1"):
+        return assume == "1"
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    try:
+        return "microsoft" in Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
+
+
 def on_macos() -> bool:
     return platform.system() == "Darwin"
 
 
 def unit_path() -> Path:
-    return Path.home() / "Library" / "LaunchAgents" / MAC_SERVICE_NAME
+    if on_macos():
+        return Path.home() / "Library" / "LaunchAgents" / MAC_SERVICE_NAME
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "systemd" / "user" / SERVICE_NAME
 
 
 def unit_text(home: Path) -> str:
     script = Path(__file__).resolve()
-    if not on_macos():
-        raise TelegramError("the Telegram mirror service supports macOS only")
-    return plistlib.dumps({
-        "Label": MAC_SERVICE_LABEL,
-        "ProgramArguments": [sys.executable, str(script), "run"],
-        "EnvironmentVariables": {
-            "PI_TELEGRAM_DIR": str(home),
-            "PATH": (str(Path.home() / ".local" / "bin")
-                     + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"),
-        },
-        "RunAtLoad": True,
-        "KeepAlive": True,
-        "ProcessType": "Interactive",
-    }, sort_keys=False).decode("utf-8")
+    if on_macos():
+        return plistlib.dumps({
+            "Label": MAC_SERVICE_LABEL,
+            "ProgramArguments": [sys.executable, str(script), "run"],
+            "EnvironmentVariables": {
+                "PI_TELEGRAM_DIR": str(home),
+            },
+            "RunAtLoad": True,
+            "KeepAlive": True,
+            "ProcessType": "Interactive",
+        }, sort_keys=False).decode("utf-8")
+    return (
+        "[Unit]\n"
+        "Description=Pi Telegram terminal mirror\n"
+        "After=network-online.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=simple\n"
+        f"Environment=PI_TELEGRAM_DIR={shlex.quote(str(home))}\n"
+        f"ExecStart={sys.executable} {shlex.quote(str(script))} run\n"
+        "Restart=always\n"
+        "RestartSec=5\n"
+        # The bot's own stop is bounded by STOP_GRACE_SECONDS; this leaves room
+        # for it without inviting the 90s default when something goes wrong.
+        "TimeoutStopSec=20\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=default.target\n"
+    )
+
+
+def systemctl(*arguments: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["systemctl", "--user", *arguments], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, check=False,
+    )
 
 
 def require_service_platform() -> None:
-    if not on_macos():
-        raise TelegramError("the Telegram mirror service supports macOS only")
+    if not is_wsl() and not on_macos():
+        raise TelegramError("the Telegram mirror service requires WSL or macOS")
 
 
 def launchctl(*arguments: str) -> subprocess.CompletedProcess:
@@ -1943,39 +1881,50 @@ def install_service(home: Path) -> int:
     require_service_platform()
     target = unit_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    write_private_file(target, unit_text(home))
-    result = launchctl("bootout", mac_service_target())
-    if result.returncode != 0 and not any(
-            phrase in result.stdout.lower()
-            for phrase in ("could not find service", "service not found", "no such process")
-    ):
-        raise TelegramError(f"launchctl bootout failed: {result.stdout.strip()}")
-    result = launchctl("bootstrap", f"gui/{os.getuid()}", str(target))
-    if result.returncode != 0:
-        raise TelegramError(f"launchctl bootstrap failed: {result.stdout.strip()}")
-    result = launchctl("kickstart", "-k", mac_service_target())
-    if result.returncode != 0:
-        raise TelegramError(f"launchctl kickstart failed: {result.stdout.strip()}")
-    print(f"installed {target} and started {MAC_SERVICE_LABEL}")
+    target.write_text(unit_text(home), encoding="utf-8")
+    target.chmod(0o600)
+    if on_macos():
+        result = launchctl("bootstrap", f"gui/{os.getuid()}", str(target))
+        if result.returncode != 0 and not any(
+                phrase in result.stdout.lower()
+                for phrase in ("already bootstrapped", "service already loaded")):
+            raise TelegramError(f"launchctl bootstrap failed: {result.stdout.strip()}")
+        result = launchctl("kickstart", "-k", mac_service_target())
+        if result.returncode != 0:
+            raise TelegramError(f"launchctl kickstart failed: {result.stdout.strip()}")
+        print(f"installed {target} and started {MAC_SERVICE_LABEL}")
+        return 0
+    for arguments in (("daemon-reload",), ("enable", "--now", SERVICE_NAME)):
+        result = systemctl(*arguments)
+        if result.returncode != 0:
+            print(result.stdout, end="")
+            raise TelegramError(f"systemctl --user {' '.join(arguments)} failed")
+    print(f"installed {target} and started {SERVICE_NAME}")
     return 0
 
 
 def uninstall_service() -> int:
     require_service_platform()
     target = unit_path()
-    result = launchctl("bootout", mac_service_target())
-    if result.returncode != 0 and not any(
-            phrase in result.stdout.lower()
-            for phrase in ("could not find service", "service not found", "no such process")
-    ):
-        raise TelegramError(f"launchctl bootout failed: {result.stdout.strip()}")
+    if on_macos():
+        result = launchctl("bootout", mac_service_target())
+        if result.returncode != 0 and not any(
+                phrase in result.stdout.lower()
+                for phrase in ("could not find service", "service not found", "no such process")
+        ):
+            raise TelegramError(f"launchctl bootout failed: {result.stdout.strip()}")
+        remove_file(target)
+        print(f"removed {target}")
+        return 0
+    systemctl("disable", "--now", SERVICE_NAME)
     remove_file(target)
+    systemctl("daemon-reload")
     print(f"removed {target}")
     return 0
 
 
 def pair(home: Path) -> int:
-    token = read_env(home).get("TELEGRAM_BOT_TOKEN", "")
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or read_env(home).get("TELEGRAM_BOT_TOKEN", "")
     if not token:
         raise TelegramError(f"no TELEGRAM_BOT_TOKEN in {env_file(home)}")
     base = os.environ.get("PI_TELEGRAM_API_BASE") or DEFAULT_API_BASE
@@ -2021,8 +1970,6 @@ def allow_root(home: Path, root: str) -> int:
 def migrate(home: Path) -> int:
     """Copy legacy settings into the new private directory, never mutate legacy data."""
     legacy = Path.home() / ".firstmate-telegram"
-    if home.resolve(strict=False) == legacy.resolve(strict=False):
-        raise TelegramError("migration destination must differ from the legacy directory")
     source_env = legacy / "env"
     source_config = legacy / "config.json"
     if not source_env.is_file() or not source_config.is_file():
@@ -2030,23 +1977,20 @@ def migrate(home: Path) -> int:
     values = read_env(legacy)
     token = values.get("TELEGRAM_BOT_TOKEN", "")
     data = read_config(legacy)
-    user_id = data.get("user_id")
-    chat_id = data.get("chat_id")
-    if not token or not valid_telegram_id(user_id) or not valid_telegram_id(chat_id):
+    if not token or not isinstance(data.get("user_id"), int) or not isinstance(data.get("chat_id"), int):
         raise TelegramError("legacy configuration failed validation; nothing was changed")
     private_dir(home)
-    write_private_file(env_file(home), "TELEGRAM_BOT_TOKEN=" + token + "\n")
-    existing = read_config(home)
-    merged = dict(existing)
-    merged.update(data)
-    write_config(home, merged)
+    env_file(home).write_text("TELEGRAM_BOT_TOKEN=" + token + "\n", encoding="utf-8")
+    env_file(home).chmod(0o600)
+    write_config(home, data)
     print("migration copied and validated; legacy configuration was not changed")
     return 0
 
 
 def status(home: Path) -> int:
     data = read_config(home)
-    token = "present" if read_env(home).get("TELEGRAM_BOT_TOKEN") else "missing"
+    token = "present" if (os.environ.get("TELEGRAM_BOT_TOKEN")
+                          or read_env(home).get("TELEGRAM_BOT_TOKEN")) else "missing"
     print(f"home: {home}")
     print(f"token: {token}")
     print(f"paired user: {data.get('user_id', 'none')}")
@@ -2057,7 +2001,8 @@ def status(home: Path) -> int:
         result = launchctl("print", mac_service_target())
         print(f"service: {'active' if result.returncode == 0 else 'inactive'}")
     else:
-        print("service: unsupported on this platform")
+        result = systemctl("is-active", SERVICE_NAME)
+        print(f"service: {result.stdout.strip() or 'unknown'}")
     return 0
 
 
@@ -2074,27 +2019,23 @@ def run(home: Path) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="pi-telegram.py",
-        description="Pi's Telegram terminal mirror bot (macOS only).",
+        description="Pi's Telegram terminal mirror bot (WSL and macOS).",
         epilog=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "command",
-        choices=["run", "pair", "status", "service-unit", "install-service", "uninstall-service", "allow-root", "migrate", "package-root"],
+        choices=["run", "pair", "status", "service-unit", "install-service", "uninstall-service", "allow-root", "migrate"],
     )
     parser.add_argument("root", nargs="?", help="canonical Pi project root for allow-root")
     args = parser.parse_args(argv)
-    if args.command == "package-root":
-        print(Path(__file__).resolve().parent.parent)
-        return 0
-    home = home_dir()
-    if args.command == "migrate":
-        return migrate(home)
-    home = private_dir(home)
+    home = private_dir(home_dir())
     if args.command == "allow-root":
         if not getattr(args, "root", None):
             raise TelegramError("allow-root requires a project root")
         return allow_root(home, args.root)
+    if args.command == "migrate":
+        return migrate(home)
     if args.command == "run":
         return run(home)
     if args.command == "pair":
@@ -2102,7 +2043,6 @@ def main(argv: list[str]) -> int:
     if args.command == "status":
         return status(home)
     if args.command == "service-unit":
-        require_service_platform()
         print(unit_text(home), end="")
         return 0
     if args.command == "install-service":
