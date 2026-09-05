@@ -122,7 +122,7 @@ def process_command(pid):
     try:
         if sys.platform == "darwin":
             return subprocess.check_output(["ps", "-o", "command=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL).strip()
-        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\\x00", b" ").decode(errors="replace")
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(bytes([0]), b" ").decode(errors="replace")
     except (OSError, subprocess.SubprocessError):
         return ""
 

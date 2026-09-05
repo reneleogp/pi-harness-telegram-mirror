@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import NoReturn
 
 MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
+STOP_TIMEOUT = 2.0
 
 
 def fail(message: str) -> "NoReturn":
@@ -67,11 +68,25 @@ def main() -> int:
             )
 
             def stop(_signum: int, _frame: object) -> None:
-                if child is not None and child.poll() is None:
-                    try:
-                        os.killpg(child.pid, signal.SIGTERM)
-                    except OSError:
-                        child.terminate()
+                if child is None or child.poll() is not None:
+                    return
+                try:
+                    os.killpg(child.pid, signal.SIGTERM)
+                except OSError:
+                    child.terminate()
+                try:
+                    child.wait(timeout=STOP_TIMEOUT)
+                    return
+                except subprocess.TimeoutExpired:
+                    pass
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except OSError:
+                    child.kill()
+                try:
+                    child.wait(timeout=STOP_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    pass
 
             signal.signal(signal.SIGTERM, stop)
             signal.signal(signal.SIGINT, stop)
