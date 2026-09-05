@@ -47,8 +47,17 @@ def test_migration_writes_usable_env_without_touching_legacy(tmp_path):
 
     conventional = tmp_path / ".firstmate-telegram"
     conventional.mkdir()
+    target.mkdir(exist_ok=True)
+    outside = tmp_path / "outside"
+    outside.write_text("untouched")
+    (target / "env").symlink_to(outside)
     (conventional / "env").write_text("TELEGRAM_BOT_TOKEN=test-token\n")
     (conventional / "config.json").write_text(json.dumps({"user_id": 7, "chat_id": 8}))
+    result = subprocess.run([sys.executable, str(BOT), "migrate"], env=env,
+                            capture_output=True, text=True)
+    assert result.returncode != 0
+    assert outside.read_text() == "untouched"
+    (target / "env").unlink()
     result = subprocess.run([sys.executable, str(BOT), "migrate"], env=env,
                             capture_output=True, text=True)
     assert result.returncode == 0
