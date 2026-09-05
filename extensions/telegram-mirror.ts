@@ -538,7 +538,7 @@ export default function (pi: ExtensionAPI) {
     deliveries = deliveries.then(async () => {
       await sendTelegramDelivery(
         (content, options) => pi.sendUserMessage(content as never, options),
-        activeCtx?.isIdle() === true,
+        activeCtx?.isIdle === true,
         text,
         image,
       );
