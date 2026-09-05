@@ -73,22 +73,26 @@ def read_record():
     except (OSError, ValueError): return None
 def acquire_guard():
     token = secrets.token_hex(16)
+    payload = json.dumps({"token": token, "pid": os.getpid(), "start": identity(os.getpid())})
     try:
         fd=os.open(GUARD, os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
-        with os.fdopen(fd, "w") as stream: stream.write(token)
+        with os.fdopen(fd, "w") as stream: stream.write(payload)
         return token
     except FileExistsError:
         try:
             if time.time()-GUARD.stat().st_mtime <= 30: return ""
+            owner = json.loads(GUARD.read_text())
+            pid = int(owner["pid"])
+            if os.kill(pid, 0) is None and identity(pid) == owner["start"]: return ""
             stale = GUARD.with_name(".session.stale.%s" % secrets.token_hex(8))
             os.rename(GUARD, stale)
             stale.unlink()
             return acquire_guard()
-        except OSError:
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
             return ""
 def guard_owned(token):
-    try: return GUARD.read_text() == token
-    except OSError: return False
+    try: return json.loads(GUARD.read_text())["token"] == token
+    except (OSError, ValueError, KeyError, json.JSONDecodeError): return False
 def release(token):
     try:
         if guard_owned(token): GUARD.unlink()
