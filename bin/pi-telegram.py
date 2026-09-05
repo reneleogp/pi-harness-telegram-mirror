@@ -485,6 +485,7 @@ class Queued:
     reply_to: int
     image: Optional[dict[str, str]] = None
     image_bytes: int = 0
+    rejection_retries: int = 0
 
 
 @dataclass
@@ -814,6 +815,9 @@ class MirrorBot:
             return
         self.queue.appendleft(item)
         await self.send(DELIVERY_RETRY_REPLY, reply_to=item.reply_to)
+        if item.rejection_retries < 1:
+            item.rejection_retries += 1
+            await self.pump()
 
     # --- voice ---
 

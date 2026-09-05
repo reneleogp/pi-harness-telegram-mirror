@@ -16,7 +16,12 @@ def test_exact_root_and_contention():
 def test_permissions_and_no_secret_in_unit():
  with tempfile.TemporaryDirectory() as t:
   h=Path(t)/'h'; e={**os.environ,'PI_TELEGRAM_DIR':str(h)}; (h/'env').parent.mkdir(); (h/'env').write_text('TELEGRAM_BOT_TOKEN=secret\n'); (h/'env').chmod(0o600)
-  out=subprocess.check_output([sys.executable,str(ROOT/'bin/pi-telegram.py'),'service-unit'],env=e,text=True)
-  assert 'secret' not in out and 'TELEGRAM_BOT_TOKEN' not in out
+  result=subprocess.run([sys.executable,str(ROOT/'bin/pi-telegram.py'),'service-unit'],env=e,capture_output=True,text=True)
+  if sys.platform == 'darwin':
+   assert result.returncode == 0
+   assert 'secret' not in result.stdout and 'TELEGRAM_BOT_TOKEN' not in result.stdout
+  else:
+   assert result.returncode != 0
+   assert 'macOS only' in result.stderr
   assert (h/'env').stat().st_mode & 0o077 == 0
 def test_help(): assert subprocess.run([sys.executable,str(ROOT/'bin/pi-telegram.py'),'--help'],capture_output=True).returncode==0
