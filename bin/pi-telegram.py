@@ -519,6 +519,7 @@ class MirrorBot:
     _sequence: int = 0
     migration_nonce: Optional[str] = None
     migration_delivery_ids: dict[str, str] = field(default_factory=dict)
+    migration_receipts: dict[str, set[str]] = field(default_factory=dict)
     _stopping: bool = False
 
     # --- helpers ---
@@ -809,7 +810,7 @@ class MirrorBot:
         if item is None:
             return
         migration_nonce = self.migration_delivery_ids.pop(message_id, None)
-        if migration_nonce is not None:
+        if migration_nonce is not None and {"text", "image"} <= self.migration_receipts.get(migration_nonce, set()):
             await self.write_frame({"t": "migration_ack", "nonce": migration_nonce,
                                     "text": True, "image": True, "voice": True})
         # Pending state clears either way: the message reached Pi, so it must
@@ -1157,6 +1158,12 @@ class MirrorBot:
                             voice_id=voice_id, card_id=voice_id,
                             text=transcript, audio=None, migration_nonce=nonce,
                         )
+            return
+        if kind == "migration_receipt":
+            nonce = frame.get("nonce")
+            stage = frame.get("stage")
+            if isinstance(nonce, str) and isinstance(stage, str) and stage in ("text", "image"):
+                self.migration_receipts.setdefault(nonce, set()).add(stage)
             return
         if kind == "migration_ack":
             nonce = frame.get("nonce")
