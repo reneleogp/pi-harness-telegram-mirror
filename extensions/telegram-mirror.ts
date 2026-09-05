@@ -500,7 +500,13 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     if (frame.t === "migration_verify" && typeof frame.nonce === "string") {
-      write({ t: "migration_ack", nonce: frame.nonce, text: true, image: true, voice: true });
+      const text = typeof frame.text === "string" && frame.text === `migration-text:${frame.nonce}`;
+      const image = typeof frame.image === "object" && frame.image !== null;
+      const voice = typeof frame.voice === "string" && frame.voice.length === 64;
+      if (text && image && voice) {
+        activeCtx?.ui.notify("Migration text, image, and voice review test received.", "info");
+        write({ t: "migration_ack", nonce: frame.nonce, text, image, voice });
+      }
       return;
     }
     if (frame.t === "deliver" && typeof frame.text === "string" && typeof frame.id === "string") {

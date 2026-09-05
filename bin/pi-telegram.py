@@ -88,6 +88,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import hashlib
 import binascii
 import contextlib
 import ctypes
@@ -1162,7 +1163,10 @@ class MirrorBot:
                 await asyncio.sleep(0.2)
                 continue
             if self.client is not None and not self.client.is_closing():
-                await self.write_frame({"t": "migration_verify", "nonce": nonce})
+                await self.write_frame({"t": "migration_verify", "nonce": nonce,
+                                        "text": payload.get("text"),
+                                        "image": payload.get("image"),
+                                        "voice": payload.get("voice")})
                 remove_file(request)
             await asyncio.sleep(0.2)
 
@@ -2083,8 +2087,15 @@ def verify_migration(home: Path, text: bool, image: bool, voice: bool,
                      voice_file: Optional[str], proof: Optional[str]) -> int:
     if not (text and image and voice and voice_file):
         raise TelegramError("migration verification requires --text --image --voice --voice-file")
+    audio = Path(voice_file)
+    if not audio.is_file() or audio.stat().st_size > MAX_VOICE_BYTES:
+        raise TelegramError("migration voice verification file is missing or too large")
+    voice_digest = hashlib.sha256(audio.read_bytes()).hexdigest()
     nonce = secrets.token_urlsafe(24)
-    write_private_file(migration_request_path(home), json.dumps({"nonce": nonce}))
+    request = {"nonce": nonce, "text": f"migration-text:{nonce}",
+               "image": {"data": base64.b64encode(b"migration-image:" + nonce.encode()).decode(),
+                         "mime": "text/plain"}, "voice": voice_digest}
+    write_private_file(migration_request_path(home), json.dumps(request))
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
@@ -2098,9 +2109,6 @@ def verify_migration(home: Path, text: bool, image: bool, voice: bool,
     else:
         raise TelegramError("migration verification requires live Pi acknowledgements")
     remove_file(migration_ack_path(home))
-    audio = Path(voice_file)
-    if not audio.is_file() or audio.stat().st_size > MAX_VOICE_BYTES:
-        raise TelegramError("migration voice verification file is missing or too large")
     data = read_config(home)
     data["migration_pending"] = False
     write_config(home, data)
