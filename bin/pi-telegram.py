@@ -255,8 +255,8 @@ def private_dir(path: Path) -> Path:
 def home_dir() -> Path:
     value = os.environ.get("PI_TELEGRAM_DIR")
     if value:
-        return Path(value).expanduser()
-    return Path.home() / ".pi-telegram"
+        return Path(value).expanduser().resolve(strict=False)
+    return (Path.home() / ".pi-telegram").resolve(strict=False)
 
 
 def env_file(home: Path) -> Path:
@@ -1214,6 +1214,7 @@ class MirrorBot:
     async def run(self) -> None:
         path = socket_path(self.config.home)
         private_dir(self.config.home)
+        private_dir(audio_dir(self.config.home))
         clear_audio(self.config.home)
         remove_file(path)
         server = await asyncio.start_unix_server(self.handle_client, path=str(path),
@@ -1257,6 +1258,7 @@ class MirrorBot:
                 task.cancel()
             await asyncio.wait(tasks, timeout=STOP_GRACE_SECONDS)
             remove_file(path)
+            private_dir(audio_dir(self.config.home))
             clear_audio(self.config.home)
             log("stopped")
             sys.stderr.flush()
