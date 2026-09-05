@@ -5,12 +5,12 @@ Standalone bidirectional Telegram mirror for one Pi terminal session. Review ext
 ## Install
 
 ```sh
-pi install git:github.com/reneleogp/pi-harness-telegram-mirror@c8b64eed508ad9d6423e9a52c9cd5327c3378b1d
-pi update git:github.com/reneleogp/pi-harness-telegram-mirror@c8b64eed508ad9d6423e9a52c9cd5327c3378b1d
+pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1
+pi update git:github.com/reneleogp/pi-harness-telegram-mirror@v1
 pi remove git:github.com/reneleogp/pi-harness-telegram-mirror
 ```
 
-The install command uses an immutable release commit; update it only when intentionally selecting a different reviewed commit.
+The install command targets the reviewed `v1` release; update it only when intentionally selecting a different reviewed release. The published `v1` tag is the stable install target.
 
 `package.json` is a Pi manifest (`pi-package`) and loads `extensions/telegram-mirror.ts`. Python runs from this stable installed package location and uses the standard library; `mistune` is optional for formatting.
 
@@ -32,7 +32,7 @@ Pairing stores only one private sender/chat in owner-only `config.json`. Never p
 
 `allow-root` records the exact canonical root. A session claims the mirror only when exact `ctx.cwd` matches a registered root; subdirectories and worktrees do not match. An owner-only atomic session record contains PID, UID, process-start identity, root, and random incarnation. Dead/reused records are safely reclaimable. The bot validates kernel identity, never client claims: Linux `SO_PEERCRED`; macOS kernel peer PID and `getpeereid` UID. A second session or unrelated session is refused and an ineligible session stays inert. Kernel peer credentials protect the bot boundary; a same-UID process that can execute the local helper is trusted by the ownership handoff.
 
-State, token, config, socket, ownership, and audio are under `~/.pi-telegram`, so macOS LaunchAgent execution never needs project-folder privacy permission. Files/config are 0600 and the directory is 0700.
+State, token, config, socket, ownership, and audio are under `~/.pi-telegram`, so service execution never needs project-folder privacy permission. Files/config are 0600 and the directory is 0700.
 
 ## Service
 
@@ -43,7 +43,7 @@ python3 /installed/package/bin/pi-telegram.py status
 python3 /installed/package/bin/pi-telegram.py uninstall-service
 ```
 
-macOS is the only supported, tested, and managed-service platform. macOS uses `~/Library/LaunchAgents/com.pi.telegram.plist`; service commands reject other platforms clearly. Direct `run` and other portable paths are best-effort and unsupported elsewhere; there is no Linux service infrastructure. The LaunchAgent contains only the stable script path and private directory, never the token. Install, status, and uninstall are idempotent.
+Linux systemd user services and macOS LaunchAgents are supported. Linux uses `~/.config/systemd/user/pi-telegram.service`; macOS uses `~/Library/LaunchAgents/com.pi.telegram.plist`. Both contain only the stable script path, private directory, and required service PATH, never the token. Install, status, and uninstall are idempotent.
 
 ## Behavior and Pi commands
 
@@ -53,16 +53,17 @@ Voice notes receive a review card with Send, Edit, Cancel, bounded transcripts, 
 
 ## Local Parakeet V3 voice
 
-Optional macOS Apple Silicon setup:
+Optional macOS or Linux setup:
 
 ```sh
-brew install ffmpeg uv
+# macOS: brew install ffmpeg uv
+# Linux: install ffmpeg and uv with your distribution's package manager
 uv tool install 'parakeet-mlx==0.5.2'
 python3 /installed/package/bin/pi-parakeet-mlx-transcribe.py --help
 # prewarm by transcribing a short local sample before going live
 ```
 
-The adapter uses public `mlx-community/parakeet-tdt-0.6b-v3`, no cloud or required Hugging Face token, private temporary output, transcript-only stdout, bounded diagnostics, process-group termination, and cleanup. Cloud transcription is not required.
+The adapter uses public `mlx-community/parakeet-tdt-0.6b-v3`, no cloud or required Hugging Face token, private temporary output, transcript-only stdout, bounded diagnostics, process-group termination, and cleanup. Cloud transcription is not required. On Linux, the service includes `~/.local/bin` so a `uv tool install` executable is available.
 
 ## Migration
 
@@ -72,7 +73,7 @@ After installing and connecting Pi, run:
 python3 /installed/package/bin/pi-telegram.py migrate
 ```
 
-It validates and copies token, pairing, and settings from legacy `~/.firstmate-telegram` into `~/.pi-telegram` without printing secrets or deleting or mutating the old directory. Retry is idempotent. After installation, the operator must perform one real text, image, and voice smoke test through Pi before retiring the legacy setup. The legacy path exists only in this explicit migration operation, not normal runtime.
+It validates and copies token, pairing, and settings from the legacy `~/.firstmate-telegram` configuration into `~/.pi-telegram` without printing secrets or deleting or mutating the old directory. Retry is idempotent. After installation, the operator must perform one real text, image, and voice smoke test through Pi before retiring the legacy setup. The legacy path exists only in this explicit migration operation, not normal runtime.
 
 ## Troubleshooting, privacy, limitations
 

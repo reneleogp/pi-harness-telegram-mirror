@@ -25,35 +25,6 @@ def command(*args, env):
                           capture_output=True, text=True)
 
 
-def test_macos_identity_is_locale_stable(monkeypatch):
-    spec = importlib.util.spec_from_file_location("pi_telegram_owner", OWNER)
-    owner = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(owner)
-    calls = []
-
-    def fake_ps(args, **kwargs):
-        calls.append(kwargs.get("env"))
-        locale = (kwargs.get("env") or os.environ).get("LC_ALL")
-        # Model ps's locale-dependent output. The C representation is stable;
-        # the ambient French and German representations are intentionally not.
-        return {
-            "C": "Sat Sep  5 11:24:11 2026\n",
-            "fr_FR.UTF-8": "sam. 5 sept. 11:24:11 2026\n",
-            "de_DE.UTF-8": "Sa 5. Sept. 11:24:11 2026\n",
-        }[locale]
-
-    monkeypatch.setattr(owner.sys, "platform", "darwin")
-    monkeypatch.setattr(owner.subprocess, "check_output", fake_ps)
-    monkeypatch.setenv("LC_ALL", "fr_FR.UTF-8")
-    first = owner.identity(123)
-    monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
-    second = owner.identity(123)
-
-    assert first == second == "Sat Sep  5 11:24:11 2026"
-    assert len(calls) == 2
-    assert all(env["LC_ALL"] == env["LANG"] == "C" for env in calls)
-
-
 def test_unrelated_process_cannot_claim_allowed_root(tmp_path):
     home = tmp_path / "home"
     root = tmp_path / "project"

@@ -2,6 +2,8 @@ import asyncio
 import importlib.util
 import json
 import os
+import plistlib
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -40,13 +42,50 @@ def test_ineligible_session_cannot_create_ownership_record(tmp_path):
     assert not (home / "session.json").exists()
 
 
-def test_non_macos_service_request_fails_without_side_effect(tmp_path):
-    if sys.platform == "darwin":
-        return
-    env = {**os.environ, "PI_TELEGRAM_DIR": str(tmp_path / "home")}
+def parse_systemd_unit(text):
+    sections = {}
+    section = None
+    for line in text.splitlines():
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+            sections[section] = {}
+            continue
+        assert section is not None and "=" in line
+        key, value = line.split("=", 1)
+        parsed = shlex.split(value, comments=False)
+        sections[section].setdefault(key, []).append([item.replace("%%", "%") for item in parsed])
+    return sections
+
+
+def test_service_unit_is_platform_native_and_secret_free(tmp_path):
+    state_dir = tmp_path / "state with spaces %n"
+    env = {**os.environ, "PI_TELEGRAM_DIR": str(state_dir)}
     result = subprocess.run([sys.executable, str(BOT), "service-unit"], env=env, capture_output=True, text=True)
-    assert result.returncode != 0
-    assert "macOS only" in result.stderr
+    if sys.platform == "darwin":
+        assert result.returncode == 0
+        unit = plistlib.loads(result.stdout.encode())
+        assert unit["Label"] == "com.pi.telegram"
+        assert unit["EnvironmentVariables"]["PI_TELEGRAM_DIR"] == str(state_dir)
+        assert "TELEGRAM_BOT_TOKEN" not in result.stdout
+    elif sys.platform == "linux":
+        assert result.returncode == 0
+        unit = parse_systemd_unit(result.stdout)
+        assert unit["Service"]["Type"] == [["simple"]]
+        environments = unit["Service"]["Environment"]
+        assert [f"PI_TELEGRAM_DIR={state_dir}"] in environments
+        assert [f"PATH={Path.home() / '.local' / 'bin'}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"] in environments
+        assert unit["Install"]["WantedBy"] == [["default.target"]]
+        assert "TELEGRAM_BOT_TOKEN" not in result.stdout
+    else:
+        assert result.returncode != 0
+
+
+def test_supported_platforms_use_package_voice_adapter(monkeypatch):
+    bot = load_bot()
+    monkeypatch.setattr(bot.platform, "system", lambda: "Linux")
+    assert bot.default_transcribe_command() == str(ROOT / "bin/pi-parakeet-mlx-transcribe.py")
 
 
 def test_rejected_delivery_retries_once_then_reports_drop():
