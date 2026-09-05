@@ -500,12 +500,19 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     if (frame.t === "migration_verify" && typeof frame.nonce === "string") {
+      const image = asQueuedImage(frame.image);
       const text = typeof frame.text === "string" && frame.text === `migration-text:${frame.nonce}`;
-      const image = typeof frame.image === "object" && frame.image !== null;
-      const voice = typeof frame.voice === "string" && frame.voice.length === 64;
+      const voice = typeof frame.voice === "string" && /^[a-f0-9]{64}$/.test(frame.voice);
       if (text && image && voice) {
-        activeCtx?.ui.notify("Migration text, image, and voice review test received.", "info");
-        write({ t: "migration_ack", nonce: frame.nonce, text, image, voice });
+        deliveries = deliveries.then(async () => {
+          await pi.sendUserMessage(frame.text as string, { deliverAs: "steer" });
+          await pi.sendUserMessage([{ type: "text", text: "migration-image" },
+            { type: "image", data: image.data, mimeType: image.mime }] as never,
+            { deliverAs: "steer" });
+          activeCtx?.ui.notify("Review migration voice transcript, then send it.", "info");
+          await pi.sendUserMessage("migration voice transcript review/send", { deliverAs: "steer" });
+          write({ t: "migration_ack", nonce: frame.nonce, text: true, image: true, voice: true });
+        }).catch(() => undefined);
       }
       return;
     }
