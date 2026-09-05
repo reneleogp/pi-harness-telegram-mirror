@@ -28,7 +28,7 @@ Pairing stores only one private sender/chat in owner-only `config.json`. Never p
 
 ## Ownership and security
 
-`allow-root` records the exact canonical root. A session claims the mirror only when exact `ctx.cwd` matches a registered root; subdirectories and worktrees do not match. An owner-only atomic session record contains PID, UID, process-start identity, root, and random incarnation. Dead/reused records are safely reclaimable. The bot validates kernel identity, never client claims: Linux `SO_PEERCRED`; macOS kernel peer PID and `getpeereid` UID. A second session or unrelated same-user process is refused and an ineligible session stays inert.
+`allow-root` records the exact canonical root. A session claims the mirror only when exact `ctx.cwd` matches a registered root; subdirectories and worktrees do not match. An owner-only atomic session record contains PID, UID, process-start identity, root, and random incarnation. Dead/reused records are safely reclaimable. The bot validates kernel identity, never client claims: Linux `SO_PEERCRED`; macOS kernel peer PID and `getpeereid` UID. A second session or unrelated session is refused and an ineligible session stays inert. Kernel peer credentials protect the bot boundary; a same-UID process that can execute the local helper is trusted by the ownership handoff.
 
 State, token, config, socket, ownership, and audio are under `~/.pi-telegram`, so macOS LaunchAgent execution never needs project-folder privacy permission. Files/config are 0600 and the directory is 0700.
 

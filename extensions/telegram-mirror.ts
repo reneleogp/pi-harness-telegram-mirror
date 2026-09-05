@@ -18,7 +18,6 @@
 // extension is the client, because the bot outlives every Pi session. The wire
 // protocol is stated once in that script's header.
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   closeSync,
@@ -29,7 +28,6 @@ import {
   openSync,
   readFileSync,
   readSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { connect, type Socket } from "node:net";
@@ -104,18 +102,8 @@ function ownerHelper(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "../bin/pi-telegram-owner.py");
 }
 function claim(cwd: string): boolean {
-  const challenge = randomBytes(32).toString("hex");
-  const challengePath = join(botHome(), `.claim.${process.pid}`);
-  try {
-    if (!existsSync(botHome())) mkdirSync(botHome(), { recursive: true, mode: 0o700 });
-    writeFileSync(challengePath, challenge + "\n", { mode: 0o600, flag: "wx" });
-    const result = spawnSync("python3", [ownerHelper(), "claim", cwd, String(process.pid), challenge], { stdio: "ignore", timeout: 2000 });
-    return result.status === 0;
-  } catch {
-    return false;
-  } finally {
-    try { unlinkSync(challengePath); } catch {}
-  }
+  const result = spawnSync("python3", [ownerHelper(), "claim", cwd, String(process.pid)], { stdio: "ignore", timeout: 2000 });
+  return result.status === 0;
 }
 
 function readDisplayStatus(): boolean {
