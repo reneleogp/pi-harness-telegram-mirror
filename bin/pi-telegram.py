@@ -2050,11 +2050,24 @@ def migrate(home: Path) -> int:
     return 0
 
 
-def verify_migration(home: Path, text: bool, image: bool, voice: bool) -> int:
-    if not (text and image and voice):
-        raise TelegramError("migration verification requires --text --image --voice")
+def verify_migration(home: Path, text: bool, image: bool, voice: bool,
+                     voice_file: Optional[str]) -> int:
+    if not (text and image and voice and voice_file):
+        raise TelegramError("migration verification requires --text --image --voice --voice-file")
     config = load_config(home)
-    TelegramApi(config.api_base, config.token).request_sync("getMe", {})
+    api = TelegramApi(config.api_base, config.token)
+    chat_id = str(config.chat_id)
+    api.request_sync("sendMessage", {"chat_id": chat_id,
+                                      "text": "Pi Telegram migration text verification"})
+    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScK8WQAAAABJRU5ErkJggg==")
+    asyncio.run(api.upload("sendPhoto", {"chat_id": chat_id}, [("photo", "migration.png", png)]))
+    audio = Path(voice_file)
+    if not audio.is_file() or audio.stat().st_size > MAX_VOICE_BYTES:
+        raise TelegramError("migration voice verification file is missing or too large")
+    payload = audio.read_bytes()
+    if len(payload) > MAX_VOICE_BYTES:
+        raise TelegramError("migration voice verification file is too large")
+    asyncio.run(api.upload("sendVoice", {"chat_id": chat_id}, [("voice", audio.name, payload)]))
     data = read_config(home)
     data["migration_pending"] = False
     write_config(home, data)
@@ -2106,6 +2119,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--text", action="store_true")
     parser.add_argument("--image", action="store_true")
     parser.add_argument("--voice", action="store_true")
+    parser.add_argument("--voice-file")
     args = parser.parse_args(argv)
     home = private_dir(home_dir())
     if args.command == "allow-root":
@@ -2115,7 +2129,7 @@ def main(argv: list[str]) -> int:
     if args.command == "migrate":
         return migrate(home)
     if args.command == "verify-migration":
-        return verify_migration(home, args.text, args.image, args.voice)
+        return verify_migration(home, args.text, args.image, args.voice, args.voice_file)
     if args.command == "run":
         return run(home)
     if args.command == "pair":
