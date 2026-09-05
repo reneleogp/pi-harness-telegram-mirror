@@ -18,6 +18,7 @@
 // extension is the client, because the bot outlives every Pi session. The wire
 // protocol is stated once in that script's header.
 import { spawnSync } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import {
   closeSync,
@@ -462,6 +463,7 @@ export default function (pi: ExtensionAPI) {
   function openSocket(): void {
     if (stopped || socket) return;
     const client = connect(socketPath);
+    const decoder = new StringDecoder("utf8");
     socket = client;
     client.on("connect", () => {
       reconnectDelay = RECONNECT_MS;
@@ -472,7 +474,11 @@ export default function (pi: ExtensionAPI) {
       write({ t: "hello", features: ["image"] });
     });
     client.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString("utf8");
+      buffer += decoder.write(chunk);
+      if (Buffer.byteLength(buffer, "utf8") > MAX_FRAME_BYTES) {
+        drop();
+        return;
+      }
       let index = buffer.indexOf("\n");
       while (index >= 0) {
         const line = buffer.slice(0, index);
@@ -480,6 +486,7 @@ export default function (pi: ExtensionAPI) {
         if (line.trim()) handleFrame(line);
         index = buffer.indexOf("\n");
       }
+      if (Buffer.byteLength(buffer, "utf8") > MAX_FRAME_BYTES) drop();
     });
     const drop = (): void => {
       if (socket !== client) return;
