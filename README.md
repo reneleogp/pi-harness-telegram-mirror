@@ -5,12 +5,12 @@ Standalone bidirectional Telegram mirror for one Pi terminal session. Review ext
 ## Install
 
 ```sh
-pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1
-pi update git:github.com/reneleogp/pi-harness-telegram-mirror@v1
+pi install git:github.com/reneleogp/pi-harness-telegram-mirror@c8b64eed508ad9d6423e9a52c9cd5327c3378b1d
+pi update git:github.com/reneleogp/pi-harness-telegram-mirror@c8b64eed508ad9d6423e9a52c9cd5327c3378b1d
 pi remove git:github.com/reneleogp/pi-harness-telegram-mirror
 ```
 
-`@v1` is an immutable release tag and must never be moved; for maximum auditability, replace it with the release commit SHA.
+The install command uses an immutable release commit; update it only when intentionally selecting a different reviewed commit.
 
 `package.json` is a Pi manifest (`pi-package`) and loads `extensions/telegram-mirror.ts`. Python runs from this stable installed package location and uses the standard library; `mistune` is optional for formatting.
 
