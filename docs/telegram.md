@@ -105,7 +105,7 @@ In Telegram, these switch it and are never sent to Pi as conversation text:
 `/token_usage` reads Codex's local app-server rate-limit RPC only; it never reads or exposes credentials and never makes a model inference call. Provider quota and Pi session context are separate, and unavailable values are labeled unavailable. No empty rows are shown for other providers.
 
 Telegram's own command menu cannot contain a space, so `/telegram on`, `/telegram off`, and `/telegram status` are also published as `/telegram_on`, `/telegram_off`, and `/telegram_status`.
-The menu also publishes `/telegram_confirmations_on` and `/telegram_confirmations_off`.
+The menu also publishes `/telegram_confirmations_on`, `/telegram_confirmations_off`, and `/token_usage`.
 The aliases exist so every Telegram command is visible and tappable.
 
 While mirror mode is off, an ordinary message is answered with `Telegram mirror is off. Send /telegram_on to enable it.`, naming a command you can tap straight from the menu.
