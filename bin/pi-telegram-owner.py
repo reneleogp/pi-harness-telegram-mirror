@@ -72,19 +72,23 @@ def read_record():
         return json.loads(RECORD.read_text())
     except (OSError, ValueError): return None
 def acquire_guard():
+    token = secrets.token_hex(16)
     try:
-        fd=os.open(GUARD, os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600); os.close(fd); return True
+        fd=os.open(GUARD, os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+        with os.fdopen(fd, "w") as stream: stream.write(token)
+        return token
     except FileExistsError:
         try:
-            if time.time()-GUARD.stat().st_mtime <= 30: return False
+            if time.time()-GUARD.stat().st_mtime <= 30: return ""
             stale = GUARD.with_name(".session.stale.%s" % secrets.token_hex(8))
             os.rename(GUARD, stale)
             stale.unlink()
             return acquire_guard()
         except OSError:
-            return False
-def release():
-    try: GUARD.unlink()
+            return ""
+def release(token):
+    try:
+        if GUARD.read_text() == token: GUARD.unlink()
     except OSError: pass
 def is_requester(pid):
     if pid != os.getppid(): return False
@@ -96,7 +100,8 @@ def is_requester(pid):
 def claim(cwd, owner_pid=None):
     secure(); root=str(Path(cwd).resolve(strict=True))
     if root not in roots(): return 1
-    if not acquire_guard(): return 1
+    guard = acquire_guard()
+    if not guard: return 1
     try:
         pid = os.getpid() if owner_pid is None else int(owner_pid)
         uid = getattr(os, "getuid", lambda: -1)()
@@ -105,7 +110,7 @@ def claim(cwd, owner_pid=None):
         if pid <= 0 or not is_requester(pid): return 1
         record={"pid":pid,"uid":uid,"start":identity(pid),"root":root,"incarnation":secrets.token_hex(16)}
         tmp=RECORD.with_name(".session.tmp.%s"%secrets.token_hex(8)); tmp.write_text(json.dumps(record)+"\n"); tmp.chmod(0o600); os.replace(tmp,RECORD); return 0
-    finally: release()
+    finally: release(guard)
 def check(cwd):
     try: return 0 if (str(Path(cwd).resolve(strict=True)) in roots() and (r:=read_record()) and alive(r) and int(r["pid"])==os.getpid()) else 1
     except OSError: return 1
