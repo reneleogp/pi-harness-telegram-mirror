@@ -28,22 +28,20 @@ def test_help(): assert subprocess.run([sys.executable,str(ROOT/'bin/pi-telegram
 
 
 def test_extension_delivery_mode_starts_idle_turns_and_steers_when_busy():
-    source = (ROOT / 'extensions' / 'telegram-mirror.ts').read_text()
-    boundary = source[source.index('function queueDelivery'):source.index('function sendCommand')]
-    assert 'const options = activeCtx?.isIdle() ? undefined' in boundary
-    assert 'sendUserMessage(content as never, options)' in boundary
-    assert 'sendUserMessage(text, options)' in boundary
-
-    # Exercise the delivery contract used by both text and image submissions:
-    # idle calls omit options (which starts a turn), while busy calls steer.
-    calls = []
-    def send(content, idle):
-        options = None if idle else {'deliverAs': 'steer'}
-        calls.append((content, options))
-        return 'turn-started' if idle and options is None else 'steered'
-
-    assert send('text', True) == 'turn-started'
-    assert send([{'type': 'text', 'text': 'caption'}, {'type': 'image', 'data': 'png'}], True) == 'turn-started'
-    assert send('text', False) == 'steered'
-    assert send([{'type': 'text', 'text': 'caption'}, {'type': 'image', 'data': 'png'}], False) == 'steered'
-    assert [options for _, options in calls] == [None, None, {'deliverAs': 'steer'}, {'deliverAs': 'steer'}]
+    script = r'''
+import { sendTelegramDelivery } from "./extensions/telegram-delivery.ts";
+const calls = [];
+const send = async (content, options) => calls.push({ content, options });
+await sendTelegramDelivery(send, true, "text");
+await sendTelegramDelivery(send, true, "caption", { data: "png", mime: "image/png" });
+await sendTelegramDelivery(send, false, "text");
+await sendTelegramDelivery(send, false, "caption", { data: "png", mime: "image/png" });
+if (calls[0].options !== undefined || calls[1].options !== undefined) throw new Error("idle delivery did not start a turn");
+if (calls[2].options?.deliverAs !== "steer" || calls[3].options?.deliverAs !== "steer") throw new Error("busy delivery did not steer");
+if (calls[1].content[1].type !== "image" || calls[3].content[1].type !== "image") throw new Error("image delivery was lost");
+'''
+    result = subprocess.run(
+        ['node', '--experimental-strip-types', '--input-type=module', '-'],
+        cwd=ROOT, input=script, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
