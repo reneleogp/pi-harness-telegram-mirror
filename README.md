@@ -7,6 +7,7 @@ Standalone bidirectional Telegram mirror for one Pi terminal session. Review ext
 ```sh
 pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1
 pi update git:github.com/reneleogp/pi-harness-telegram-mirror@v1
+# For reproducible installs, replace @v1 with the published immutable commit SHA.
 pi remove git:github.com/reneleogp/pi-harness-telegram-mirror
 ```
 
@@ -70,7 +71,7 @@ After installing and connecting Pi, run:
 python3 /installed/package/bin/pi-telegram.py migrate
 ```
 
-It validates and copies token, pairing, and settings from legacy `~/.firstmate-telegram` into `~/.pi-telegram` without printing secrets or deleting/mutating the old directory. Retry is idempotent. After live text/image/voice verification, acknowledge the gate with `python3 /installed/package/bin/pi-telegram.py verify-migration --text --image --voice` before retiring the old setup. The legacy path exists only in this explicit migration operation, not normal runtime.
+It validates and copies token, pairing, and settings from legacy `~/.firstmate-telegram` into `~/.pi-telegram` without printing secrets or deleting/mutating the old directory. Retry is idempotent. After live text/image/voice verification, acknowledge the gate with `python3 /installed/package/bin/pi-telegram.py verify-migration --text --image --voice --voice-file /path/to/verification.ogg` before retiring the old setup. The legacy path exists only in this explicit migration operation, not normal runtime.
 
 ## Troubleshooting, privacy, limitations
 
