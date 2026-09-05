@@ -88,7 +88,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
-import hashlib
 import binascii
 import contextlib
 import ctypes
@@ -2090,12 +2089,7 @@ def verify_migration(home: Path, text: bool, image: bool, voice: bool,
     audio = Path(voice_file)
     if not audio.is_file() or audio.stat().st_size > MAX_VOICE_BYTES:
         raise TelegramError("migration voice verification file is missing or too large")
-    voice_digest = hashlib.sha256(audio.read_bytes()).hexdigest()
-    nonce = secrets.token_urlsafe(24)
-    request = {"nonce": nonce, "text": f"migration-text:{nonce}",
-               "image": {"data": base64.b64encode(b"migration-image:" + nonce.encode()).decode(),
-                         "mime": "text/plain"}, "voice": voice_digest}
-    write_private_file(migration_request_path(home), json.dumps(request))
+    raise TelegramError("migration verification requires the Pi voice review adapter")
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
