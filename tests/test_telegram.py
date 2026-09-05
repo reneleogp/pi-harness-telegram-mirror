@@ -30,7 +30,7 @@ def test_unrelated_process_cannot_claim_allowed_root(tmp_path):
     root.mkdir()
     env = {**os.environ, "PI_TELEGRAM_DIR": str(home)}
     assert command("allow-root", str(root), env=env).returncode == 0
-    assert command("claim", str(root), str(os.getpid()), env=env).returncode != 0
+    assert command("claim", str(root), "1", env=env).returncode != 0
     assert not (home / "session.json").exists()
 
 
@@ -104,6 +104,36 @@ def test_transcription_diagnostics_are_bounded(tmp_path):
         assert len(str(error)) < 1000
     else:
         raise AssertionError("noisy transcription unexpectedly succeeded")
+
+
+def test_kernel_peer_credentials_are_observed():
+    bot = load_bot()
+    left, right = __import__("socket").socketpair()
+
+    class Writer:
+        def get_extra_info(self, name):
+            return left if name == "socket" else None
+
+    try:
+        credentials = bot.peer_credentials(Writer())
+        if credentials is not None:
+            assert credentials[1] == os.getuid()
+            assert credentials[0] > 0
+    finally:
+        left.close()
+        right.close()
+
+
+def test_service_definition_contains_runtime_path(tmp_path):
+    bot = load_bot()
+    original = bot.on_macos
+    bot.on_macos = lambda: True
+    try:
+        service = bot.unit_text(tmp_path)
+    finally:
+        bot.on_macos = original
+    assert str(Path.home() / ".local" / "bin") in service
+    assert str(tmp_path) in service
 
 
 def test_oversized_client_frame_is_disconnected():

@@ -45,17 +45,11 @@ def acquire_guard():
 def release():
     try: GUARD.unlink()
     except OSError: pass
-def is_pi_process(pid):
+def is_requester(pid):
     if pid != os.getppid(): return False
     try:
-        if sys.platform == "darwin":
-            name = subprocess.check_output(["ps", "-o", "comm=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL).strip()
-            executable = name
-        else:
-            name = Path(f"/proc/{pid}/comm").read_text().strip()
-            executable = os.readlink(f"/proc/{pid}/exe")
-        return name == "pi" or Path(executable).name == "pi"
-    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return getattr(os, "getuid", lambda: -1)() >= 0 and identity(pid) != ""
+    except OSError:
         return False
 
 def claim(cwd, owner_pid=None):
@@ -67,7 +61,7 @@ def claim(cwd, owner_pid=None):
         uid = getattr(os, "getuid", lambda: -1)()
         old=read_record()
         if old and alive(old) and not (int(old.get("pid",-1))==pid and old.get("root")==root): return 1
-        if pid <= 0 or not is_pi_process(pid) or identity(pid) == "": return 1
+        if pid <= 0 or not is_requester(pid): return 1
         record={"pid":pid,"uid":uid,"start":identity(pid),"root":root,"incarnation":secrets.token_hex(16)}
         tmp=RECORD.with_name(".session.tmp.%s"%secrets.token_hex(8)); tmp.write_text(json.dumps(record)+"\n"); tmp.chmod(0o600); os.replace(tmp,RECORD); return 0
     finally: release()
