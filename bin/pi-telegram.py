@@ -34,8 +34,14 @@ Wire protocol (newline-delimited JSON, both directions):
   bot -> extension  {"t":"deliver","id":"...","text":...,"image":{...}}
                     {"t":"command_result","id":N|null,"text":...}
                     {"t":"state","mirror":bool,"confirmations":bool}
+                    {"t":"migration_verify","nonce":...,"text":...,"image":...,"voice":...}
+  extension -> bot  {"t":"migration_receipt","nonce":...,"stage":"text"|"image"}
+                    {"t":"migration_voice","nonce":...,"text":...}
+  bot -> extension  {"t":"migration_ack","nonce":...,"text":true,"image":true,"voice":true}
 
-The terminal frame's images and the delivery frame's image are optional.
+The terminal frame's images and the delivery frame's image are optional. Migration
+frames are emitted only during explicit live migration verification; the voice
+receipt is emitted after the transcript card's Send to Pi action is accepted.
 
 The hello frame's features decide what the bot may send. A bridge older than
 this bot does not announce "image", and an image sent to it would be silently
