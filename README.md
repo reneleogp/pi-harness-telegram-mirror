@@ -43,7 +43,7 @@ python3 /installed/package/bin/pi-telegram.py status
 python3 /installed/package/bin/pi-telegram.py uninstall-service
 ```
 
-Linux systemd user services and macOS LaunchAgents are supported. Linux uses `~/.config/systemd/user/pi-telegram.service`; macOS uses `~/Library/LaunchAgents/com.pi.telegram.plist`. Both contain only the stable script path and private directory, never the token. Install, status, and uninstall are idempotent.
+Linux systemd user services and macOS LaunchAgents are supported. Linux uses `~/.config/systemd/user/pi-telegram.service`; macOS uses `~/Library/LaunchAgents/com.pi.telegram.plist`. Both contain only the stable script path, private directory, and required service PATH, never the token. Install, status, and uninstall are idempotent.
 
 ## Behavior and Pi commands
 

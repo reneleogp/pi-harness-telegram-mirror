@@ -57,7 +57,7 @@ The command fails if the package is not installed; no repository checkout is nee
    A custom `transcribe_command` remains supported for local adapters.
 
 5. Install the optional Markdown parser used to format Pi's replies.
-   On macOS, install `mistune` into the Python environment that runs the bot, for example `python3 -m pip install mistune`.
+   On macOS or Linux, install `mistune` into the Python environment that runs the bot, for example `python3 -m pip install mistune`.
    Without it the mirror still works and simply sends every reply as plain text.
 
 6. Install the owner-scoped user service so the bot starts with your user session:
@@ -69,7 +69,7 @@ The command fails if the package is not installed; no repository checkout is nee
 
    On macOS this writes `~/Library/LaunchAgents/com.pi.telegram.plist` and starts it with `launchctl` in your GUI user domain. On Linux it writes `~/.config/systemd/user/pi-telegram.service` and starts it with `systemctl --user`.
    The service reads only its private state directory, not the project directory, so project-folder privacy permissions are unnecessary.
-   The unit contains only the private directory and package script path, never the Telegram token.
+   The unit contains only the private directory, package script path, and required service PATH, never the Telegram token.
    `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py service-unit` prints the native service definition without installing it.
    `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py uninstall-service` stops and removes the service and is safe to repeat.
    After changing the script or extension, run `uninstall-service` followed by `install-service` to restart the service.
@@ -222,7 +222,7 @@ Threading is presentation only and never changes what Pi sees or how Pi processe
 ## Voice notes
 
 The bot keeps transcription to 180 seconds for an ordinary voice note.
-On macOS, install ffmpeg, uv, and `parakeet-mlx` as described in Setup and prewarm the public model first; the initial model download can exceed that bound.
+On macOS or Linux, install ffmpeg, uv, and `parakeet-mlx` as described in Setup and prewarm the public model first; the initial model download can exceed that bound.
 
 1. Send a voice note; the bot replies `Transcribing…` to it.
 2. The audio is downloaded to owner-only temporary storage under `~/.pi-telegram/audio/` and transcribed with the local Parakeet command.
@@ -260,8 +260,8 @@ Every button action is bound to the current transcript revision, so a stale or r
 - Temporary voice audio is owner-only and is deleted after send, cancel, failure, and at bot start and stop; images are never written to disk at all.
 - Transcription memory belongs to the local speech model rather than the bot process, and the service's memory accounting includes the transcriber and its children.
 - `PI_TELEGRAM_DIR` moves the private directory; `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py --help` owns the remaining flags and environment.
-- If macOS reports a missing dependency, check `command -v ffmpeg`, `command -v parakeet-mlx`, and the service PATH; rerun the adapter in the foreground to diagnose model download failures.
-- A timeout usually means the model was not prewarmed or the Mac is memory constrained; retry after prewarming and close other memory-heavy applications.
+- If the service reports a missing dependency, check `command -v ffmpeg`, `command -v parakeet-mlx`, and the service PATH; rerun the adapter in the foreground to diagnose model download failures.
+- A timeout usually means the model was not prewarmed or the host is memory constrained; retry after prewarming and close other memory-heavy applications.
 
 The wire protocol between the bot and the Pi extension is stated once in `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py`'s header.
 
