@@ -43,7 +43,7 @@ python3 /installed/package/bin/pi-telegram.py status
 python3 /installed/package/bin/pi-telegram.py uninstall-service
 ```
 
-macOS uses `~/Library/LaunchAgents/com.pi.telegram.plist`; service commands reject other platforms clearly. The LaunchAgent contains only the stable script path and private directory, never the token. Install, status, and uninstall are idempotent.
+macOS is the only supported, tested, and managed-service platform. macOS uses `~/Library/LaunchAgents/com.pi.telegram.plist`; service commands reject other platforms clearly. Direct `run` and other portable paths are best-effort and unsupported elsewhere; there is no Linux service infrastructure. The LaunchAgent contains only the stable script path and private directory, never the token. Install, status, and uninstall are idempotent.
 
 ## Behavior and Pi commands
 
