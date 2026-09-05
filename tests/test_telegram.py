@@ -188,6 +188,33 @@ def test_service_definition_contains_runtime_path(tmp_path):
     assert str(tmp_path) in service
 
 
+def test_real_unix_socket_delivers_protocol_state(tmp_path):
+    bot = load_bot()
+    config = bot.Config(tmp_path, "token", 1, 1, "transcribe", "http://fake")
+    mirror = bot.MirrorBot(config, bot.TelegramApi("http://fake", "token"))
+
+    async def exercise():
+        path = Path("/tmp") / f"pi-test-{os.getpid()}.sock"
+        server = await asyncio.start_unix_server(mirror.handle_client, path=str(path))
+        original = bot.peer_owns_session_lock
+        bot.peer_owns_session_lock = lambda _: True
+        try:
+            reader, writer = await asyncio.open_unix_connection(path=str(path))
+            writer.write(b'{"t":"hello","features":[]}\\n')
+            await writer.drain()
+            state = json.loads((await reader.readline()).decode())
+            writer.close()
+            await writer.wait_closed()
+            assert state["t"] == "state"
+        finally:
+            bot.peer_owns_session_lock = original
+            server.close()
+            await server.wait_closed()
+            path.unlink(missing_ok=True)
+
+    asyncio.run(exercise())
+
+
 def test_oversized_client_frame_is_disconnected():
     bot = load_bot()
     config = bot.Config(Path("/tmp"), "token", 1, 1, "transcribe", "http://fake")
