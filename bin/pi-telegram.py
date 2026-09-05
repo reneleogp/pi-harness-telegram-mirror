@@ -2092,9 +2092,32 @@ def migrate(home: Path) -> int:
 
 
 def verify_migration(home: Path, text: bool, image: bool, voice: bool,
-                     voice_file: Optional[str], proof: Optional[str]) -> int:
-    if not (text and image and voice and voice_file):
-        raise TelegramError("migration verification requires --text --image --voice --voice-file")
+                     voice_file: Optional[str], proof: Optional[str],
+                     text_value: Optional[str] = None,
+                     image_file: Optional[str] = None) -> int:
+    if not (text and image and voice and voice_file and text_value and image_file):
+        raise TelegramError(
+            "migration verification requires --text --text-value --image --image-file --voice --voice-file"
+        )
+    if not text_value.strip() or utf16_length(text_value) > TRANSCRIPT_CARD_LIMIT:
+        raise TelegramError("migration verification text is empty or too long")
+    image_path = Path(image_file)
+    try:
+        image_stat = image_path.lstat()
+    except OSError as exc:
+        raise TelegramError(f"migration image verification file is unavailable: {exc}") from exc
+    if (not image_path.is_file() or image_path.is_symlink() or
+            image_stat.st_uid != os.getuid() or image_stat.st_size > MAX_IMAGE_BYTES):
+        raise TelegramError("migration image verification file is missing, unsafe, or too large")
+    try:
+        image_data = image_path.read_bytes()
+    except OSError as exc:
+        raise TelegramError(f"migration image verification file is unavailable: {exc}") from exc
+    if len(image_data) > MAX_IMAGE_BYTES:
+        raise TelegramError("migration image verification file is too large")
+    image_mime = sniff_image_mime(image_data)
+    if image_mime is None:
+        raise TelegramError("migration image verification file has an unsupported format")
     audio = Path(voice_file)
     try:
         audio_stat = audio.lstat()
@@ -2106,10 +2129,10 @@ def verify_migration(home: Path, text: bool, image: bool, voice: bool,
     nonce = secrets.token_hex(16)
     request = {
         "nonce": nonce,
-        "text": f"migration-text:{nonce}",
+        "text": text_value,
         "image": {
-            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-            "mime": "image/png",
+            "data": base64.b64encode(image_data).decode("ascii"),
+            "mime": image_mime,
         },
         "voice": {"path": str(audio.resolve())},
     }
@@ -2175,7 +2198,9 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("root", nargs="?", help="canonical Pi project root for allow-root")
     parser.add_argument("--text", action="store_true")
+    parser.add_argument("--text-value")
     parser.add_argument("--image", action="store_true")
+    parser.add_argument("--image-file")
     parser.add_argument("--voice", action="store_true")
     parser.add_argument("--voice-file")
     parser.add_argument("--proof")
@@ -2191,7 +2216,10 @@ def main(argv: list[str]) -> int:
     if args.command == "migrate":
         return migrate(home)
     if args.command == "verify-migration":
-        return verify_migration(home, args.text, args.image, args.voice, args.voice_file, args.proof)
+        return verify_migration(
+            home, args.text, args.image, args.voice, args.voice_file, args.proof,
+            args.text_value, args.image_file,
+        )
     if args.command == "run":
         return run(home)
     if args.command == "pair":
