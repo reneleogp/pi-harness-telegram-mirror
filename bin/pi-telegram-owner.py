@@ -76,9 +76,13 @@ def acquire_guard():
         fd=os.open(GUARD, os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600); os.close(fd); return True
     except FileExistsError:
         try:
-            if time.time()-GUARD.stat().st_mtime > 30: GUARD.unlink(); return acquire_guard()
-        except OSError: pass
-        return False
+            if time.time()-GUARD.stat().st_mtime <= 30: return False
+            stale = GUARD.with_name(".session.stale.%s" % secrets.token_hex(8))
+            os.rename(GUARD, stale)
+            stale.unlink()
+            return acquire_guard()
+        except OSError:
+            return False
 def release():
     try: GUARD.unlink()
     except OSError: pass

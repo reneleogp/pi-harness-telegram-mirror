@@ -2054,6 +2054,8 @@ def verify_migration(home: Path, text: bool, image: bool, voice: bool,
     if not (text and image and voice and voice_file):
         raise TelegramError("migration verification requires --text --image --voice --voice-file")
     config = load_config(home)
+    if not socket_path(home).exists():
+        raise TelegramError("migration verification requires a connected Pi session")
     api = TelegramApi(config.api_base, config.token)
     chat_id = str(config.chat_id)
     api.request_sync("sendMessage", {"chat_id": chat_id,

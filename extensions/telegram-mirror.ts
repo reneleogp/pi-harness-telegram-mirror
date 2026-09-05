@@ -168,6 +168,7 @@ const MAX_OUTSTANDING_IMAGE_WRITE_BYTES = positiveInteger(
   "PI_TELEGRAM_MAX_OUTSTANDING_WRITE_BYTES",
   Math.ceil(MAX_CLIPBOARD_TOTAL_BYTES / 3) * 4 + 3 * 1024 * 1024,
 );
+const MAX_FRAME_BYTES = positiveInteger("PI_TELEGRAM_MAX_FRAME_BYTES", 8 * 1024 * 1024);
 
 function imageMimeFromMagic(bytes: Buffer): string | undefined {
   if (bytes.length >= 8 && bytes.subarray(0, 8).equals(
@@ -410,17 +411,18 @@ export default function (pi: ExtensionAPI) {
     const target = socket;
     if (!target || target.destroyed) return false;
     const payload = `${JSON.stringify(frame)}\n`;
-    const imageBytes = Array.isArray(frame.images) ? Buffer.byteLength(payload) : 0;
-    if (imageBytes > MAX_OUTSTANDING_IMAGE_WRITE_BYTES ||
-        outstandingImageWriteBytes + imageBytes > MAX_OUTSTANDING_IMAGE_WRITE_BYTES) return false;
-    outstandingImageWriteBytes += imageBytes;
+    const frameBytes = Buffer.byteLength(payload);
+    if (frameBytes > MAX_FRAME_BYTES ||
+        frameBytes > MAX_OUTSTANDING_IMAGE_WRITE_BYTES ||
+        outstandingImageWriteBytes + frameBytes > MAX_OUTSTANDING_IMAGE_WRITE_BYTES) return false;
+    outstandingImageWriteBytes += frameBytes;
     try {
       target.write(payload, () => {
-        if (socket === target) outstandingImageWriteBytes -= imageBytes;
+        if (socket === target) outstandingImageWriteBytes -= frameBytes;
       });
       return true;
     } catch {
-      outstandingImageWriteBytes -= imageBytes;
+      outstandingImageWriteBytes -= frameBytes;
       return false;
     }
   }
