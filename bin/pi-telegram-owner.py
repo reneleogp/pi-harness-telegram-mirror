@@ -10,7 +10,13 @@ RECORD = HOME/"session.json"
 GUARD = HOME/"session.lock"
 
 def secure():
-    HOME.mkdir(mode=0o700, exist_ok=True); HOME.chmod(0o700)
+    try:
+        if HOME.is_symlink(): raise OSError("state directory is a symlink")
+        HOME.mkdir(mode=0o700, exist_ok=True)
+        if not HOME.is_dir(): raise OSError("state path is not a directory")
+        HOME.chmod(0o700)
+    except OSError:
+        raise
 def config():
     try: return json.loads(CONFIG.read_text())
     except (OSError, ValueError): return {}

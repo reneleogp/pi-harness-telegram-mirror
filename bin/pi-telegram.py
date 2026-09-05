@@ -1928,8 +1928,7 @@ def install_service(home: Path) -> int:
     require_service_platform()
     target = unit_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(unit_text(home), encoding="utf-8")
-    target.chmod(0o600)
+    write_private_file(target, unit_text(home))
     if on_macos():
         result = launchctl("bootstrap", f"gui/{os.getuid()}", str(target))
         if result.returncode != 0 and not any(
