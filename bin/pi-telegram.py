@@ -254,9 +254,8 @@ def private_dir(path: Path) -> Path:
 
 def home_dir() -> Path:
     value = os.environ.get("PI_TELEGRAM_DIR")
-    if value:
-        return Path(value).expanduser().resolve(strict=False)
-    return (Path.home() / ".pi-telegram").resolve(strict=False)
+    path = Path(value).expanduser() if value else Path.home() / ".pi-telegram"
+    return Path(os.path.abspath(os.fspath(path)))
 
 
 def env_file(home: Path) -> Path:
@@ -1613,7 +1612,7 @@ def sniff_image_mime(data: bytes) -> Optional[str]:
         return "image/png"
     if data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
     return None
 
