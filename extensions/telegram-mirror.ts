@@ -536,14 +536,17 @@ export default function (pi: ExtensionAPI) {
   // receives exactly what pasting it into the terminal would send.
   function queueDelivery(id: string, text: string, image?: QueuedImage): void {
     deliveries = deliveries.then(async () => {
+      // An idle sendUserMessage starts a turn; deliverAs is only valid while
+      // Pi is processing, where it preserves normal streaming steering.
+      const options = activeCtx?.isIdle() ? undefined : { deliverAs: "steer" as const };
       if (image) {
         const content = [
           { type: "text", text: text.trim() ? `${text}\n\n${IMAGE_MARKER}` : IMAGE_MARKER },
           { type: "image", data: image.data, mimeType: image.mime },
         ];
-        await pi.sendUserMessage(content as never, { deliverAs: "steer" });
+        await pi.sendUserMessage(content as never, options);
       } else {
-        await pi.sendUserMessage(text, { deliverAs: "steer" });
+        await pi.sendUserMessage(text, options);
       }
       write({ t: "accepted", id });
     }).catch((error: unknown) => {

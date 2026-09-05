@@ -25,3 +25,25 @@ def test_permissions_and_no_secret_in_unit():
    assert 'macOS only' in result.stderr
   assert (h/'env').stat().st_mode & 0o077 == 0
 def test_help(): assert subprocess.run([sys.executable,str(ROOT/'bin/pi-telegram.py'),'--help'],capture_output=True).returncode==0
+
+
+def test_extension_delivery_mode_starts_idle_turns_and_steers_when_busy():
+    source = (ROOT / 'extensions' / 'telegram-mirror.ts').read_text()
+    boundary = source[source.index('function queueDelivery'):source.index('function sendCommand')]
+    assert 'const options = activeCtx?.isIdle() ? undefined' in boundary
+    assert 'sendUserMessage(content as never, options)' in boundary
+    assert 'sendUserMessage(text, options)' in boundary
+
+    # Exercise the delivery contract used by both text and image submissions:
+    # idle calls omit options (which starts a turn), while busy calls steer.
+    calls = []
+    def send(content, idle):
+        options = None if idle else {'deliverAs': 'steer'}
+        calls.append((content, options))
+        return 'turn-started' if idle and options is None else 'steered'
+
+    assert send('text', True) == 'turn-started'
+    assert send([{'type': 'text', 'text': 'caption'}, {'type': 'image', 'data': 'png'}], True) == 'turn-started'
+    assert send('text', False) == 'steered'
+    assert send([{'type': 'text', 'text': 'caption'}, {'type': 'image', 'data': 'png'}], False) == 'steered'
+    assert [options for _, options in calls] == [None, None, {'deliverAs': 'steer'}, {'deliverAs': 'steer'}]
