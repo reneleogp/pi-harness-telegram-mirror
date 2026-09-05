@@ -34,14 +34,8 @@ Wire protocol (newline-delimited JSON, both directions):
   bot -> extension  {"t":"deliver","id":"...","text":...,"image":{...}}
                     {"t":"command_result","id":N|null,"text":...}
                     {"t":"state","mirror":bool,"confirmations":bool}
-                    {"t":"migration_verify","nonce":...,"text":...,"image":...,"voice":...}
-  extension -> bot  {"t":"migration_receipt","nonce":...,"stage":"text"|"image"}
-                    {"t":"migration_voice","nonce":...,"text":...}
-  bot -> extension  {"t":"migration_ack","nonce":...,"text":true,"image":true,"voice":true}
 
-The terminal frame's images and the delivery frame's image are optional. Migration
-frames are emitted only during explicit live migration verification; the voice
-receipt is emitted after the transcript card's Send to Pi action is accepted.
+The terminal frame's images and the delivery frame's image are optional.
 
 The hello frame's features decide what the bot may send. A bridge older than
 this bot does not announce "image", and an image sent to it would be silently
@@ -273,14 +267,6 @@ def socket_path(home: Path) -> Path:
     return home / "bot.sock"
 
 
-def migration_request_path(home: Path) -> Path:
-    return home / "migration-verify.request"
-
-
-def migration_ack_path(home: Path) -> Path:
-    return home / "migration-verify.ack"
-
-
 def audio_dir(home: Path) -> Path:
     return home / "audio"
 
@@ -503,7 +489,6 @@ class Voice:
     revision: int = 1
     audio: Optional[Path] = None
     prompt_id: Optional[int] = None
-    migration_nonce: Optional[str] = None
 
 
 @dataclass
@@ -523,9 +508,6 @@ class MirrorBot:
     transcribers: set = field(default_factory=set)
     active_transcription: bool = False
     _sequence: int = 0
-    migration_nonce: Optional[str] = None
-    migration_delivery_ids: dict[str, str] = field(default_factory=dict)
-    migration_receipts: dict[str, set[str]] = field(default_factory=dict)
     _stopping: bool = False
 
     # --- helpers ---
@@ -781,13 +763,10 @@ class MirrorBot:
 
     async def accept_text(self, text: str, reply_to: int,
                           image: Optional[dict[str, str]] = None,
-                          image_bytes: int = 0,
-                          migration_nonce: Optional[str] = None) -> Optional[str]:
+                          image_bytes: int = 0) -> Optional[str]:
         item = Queued(id=self.next_id(), text=text, reply_to=reply_to,
                       image=image, image_bytes=image_bytes)
         self.queue.append(item)
-        if migration_nonce is not None:
-            self.migration_delivery_ids[item.id] = migration_nonce
         if not self.connected:
             await self.send(OFFLINE_REPLY, reply_to=reply_to)
         await self.pump()
@@ -819,12 +798,8 @@ class MirrorBot:
         item = self.pending.pop(message_id, None)
         if item is None:
             return
-        migration_nonce = self.migration_delivery_ids.pop(message_id, None)
-        if migration_nonce is not None and {"text", "image"} <= self.migration_receipts.get(migration_nonce, set()):
-            await self.write_frame({"t": "migration_ack", "nonce": migration_nonce,
-                                    "text": True, "image": True, "voice": True})
         # Pending state clears either way: the message reached Pi, so it must
-        # never be re-delivered. Only the visible receipt is optional.
+        # never be re-delivered.
         if not self.config.confirmations:
             return
         await self.send(ACCEPTED_REPLY, reply_to=item.reply_to)
@@ -953,9 +928,8 @@ class MirrorBot:
             return
         await self.answer_callback(callback_id)
         if action == "send":
-            migration_nonce = entry.migration_nonce
             await self.finish_voice(entry, SENT_FOOTER)
-            await self.accept_text(entry.text, entry.voice_id, migration_nonce=migration_nonce)
+            await self.accept_text(entry.text, entry.voice_id)
             return
         if action == "cancel":
             await self.finish_voice(entry, CANCELLED_FOOTER)
@@ -1152,35 +1126,6 @@ class MirrorBot:
         if kind == "rejected":
             await self.on_rejected(str(frame.get("id")))
             return
-        if kind == "migration_voice":
-            nonce = frame.get("nonce")
-            transcript = frame.get("text")
-            if (isinstance(nonce, str) and nonce == self.migration_nonce and
-                    isinstance(transcript, str) and transcript.strip() and
-                    utf16_length(transcript) <= TRANSCRIPT_CARD_LIMIT):
-                card = await self.send(transcript)
-                if card is not None:
-                    voice_id = int(card["message_id"])
-                    if await self.edit_card(card["message_id"], transcript, main_markup(voice_id, 1)):
-                        self.voices[voice_id] = Voice(
-                            voice_id=voice_id, card_id=voice_id,
-                            text=transcript, audio=None, migration_nonce=nonce,
-                        )
-            return
-        if kind == "migration_receipt":
-            nonce = frame.get("nonce")
-            stage = frame.get("stage")
-            if isinstance(nonce, str) and isinstance(stage, str) and stage in ("text", "image"):
-                self.migration_receipts.setdefault(nonce, set()).add(stage)
-            return
-        if kind == "migration_ack":
-            nonce = frame.get("nonce")
-            if (isinstance(nonce, str) and nonce == self.migration_nonce and
-                    all(frame.get(key) is True for key in ("text", "image", "voice"))):
-                write_private_file(migration_ack_path(self.config.home), json.dumps({
-                    "nonce": nonce, "text": True, "image": True, "voice": True,
-                }))
-            return
         if kind == "terminal":
             if self.mirror_on and isinstance(frame.get("text"), str):
                 await self.mirror_terminal(frame["text"], frame.get("images"))
@@ -1213,24 +1158,6 @@ class MirrorBot:
             await self.broadcast_state()
 
     # --- run loop ---
-
-    async def migration_verifier(self) -> None:
-        while not self._stopping:
-            request = migration_request_path(self.config.home)
-            try:
-                payload = json.loads(request.read_text(encoding="utf-8"))
-                nonce = payload["nonce"]
-            except (OSError, json.JSONDecodeError, KeyError, TypeError):
-                await asyncio.sleep(0.2)
-                continue
-            if self.client is not None and not self.client.is_closing():
-                self.migration_nonce = str(nonce)
-                await self.write_frame({"t": "migration_verify", "nonce": nonce,
-                                        "text": payload.get("text"),
-                                        "image": payload.get("image"),
-                                        "voice": payload.get("voice")})
-                remove_file(request)
-            await asyncio.sleep(0.2)
 
     async def register_menu(self) -> None:
         """Publish the menu aliases, scoped to the paired chat.
@@ -1289,9 +1216,6 @@ class MirrorBot:
         menu = asyncio.create_task(self.register_menu())
         self.background.add(menu)
         menu.add_done_callback(self.background.discard)
-        verify = asyncio.create_task(self.migration_verifier())
-        self.background.add(verify)
-        verify.add_done_callback(self.background.discard)
         try:
             await asyncio.wait({poller, waiter}, return_when=asyncio.FIRST_COMPLETED)
         finally:
@@ -2092,75 +2016,8 @@ def migrate(home: Path) -> int:
     existing = read_config(home)
     merged = dict(existing)
     merged.update(data)
-    merged["migration_pending"] = True
     write_config(home, merged)
     print("migration copied and validated; legacy configuration was not changed")
-    return 0
-
-
-def verify_migration(home: Path, text: bool, image: bool, voice: bool,
-                     voice_file: Optional[str], proof: Optional[str],
-                     text_value: Optional[str] = None,
-                     image_file: Optional[str] = None) -> int:
-    if not (text and image and voice and voice_file and text_value and image_file):
-        raise TelegramError(
-            "migration verification requires --text --text-value --image --image-file --voice --voice-file"
-        )
-    if not text_value.strip() or utf16_length(text_value) > TRANSCRIPT_CARD_LIMIT:
-        raise TelegramError("migration verification text is empty or too long")
-    image_path = Path(image_file)
-    try:
-        image_stat = image_path.lstat()
-    except OSError as exc:
-        raise TelegramError(f"migration image verification file is unavailable: {exc}") from exc
-    if (not image_path.is_file() or image_path.is_symlink() or
-            image_stat.st_uid != os.getuid() or image_stat.st_size > MAX_IMAGE_BYTES):
-        raise TelegramError("migration image verification file is missing, unsafe, or too large")
-    try:
-        image_data = image_path.read_bytes()
-    except OSError as exc:
-        raise TelegramError(f"migration image verification file is unavailable: {exc}") from exc
-    if len(image_data) > MAX_IMAGE_BYTES:
-        raise TelegramError("migration image verification file is too large")
-    image_mime = sniff_image_mime(image_data)
-    if image_mime is None:
-        raise TelegramError("migration image verification file has an unsupported format")
-    audio = Path(voice_file)
-    try:
-        audio_stat = audio.lstat()
-    except OSError as exc:
-        raise TelegramError(f"migration voice verification file is unavailable: {exc}") from exc
-    if (not audio.is_file() or audio.is_symlink() or audio_stat.st_uid != os.getuid() or
-            audio_stat.st_size > MAX_VOICE_BYTES):
-        raise TelegramError("migration voice verification file is missing, unsafe, or too large")
-    nonce = secrets.token_hex(16)
-    request = {
-        "nonce": nonce,
-        "text": text_value,
-        "image": {
-            "data": base64.b64encode(image_data).decode("ascii"),
-            "mime": image_mime,
-        },
-        "voice": {"path": str(audio.resolve())},
-    }
-    write_private_file(migration_request_path(home), json.dumps(request))
-    deadline = time.monotonic() + 180
-    while time.monotonic() < deadline:
-        try:
-            evidence = json.loads(migration_ack_path(home).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            time.sleep(0.2)
-            continue
-        if evidence.get("nonce") == nonce and all(evidence.get(key) is True for key in ("text", "image", "voice")):
-            break
-        time.sleep(0.2)
-    else:
-        raise TelegramError("migration verification requires live Pi acknowledgements")
-    remove_file(migration_ack_path(home))
-    data = read_config(home)
-    data["migration_pending"] = False
-    write_config(home, data)
-    print("migration text, image, and voice verification acknowledged")
     return 0
 
 
@@ -2172,7 +2029,6 @@ def status(home: Path) -> int:
     print(f"paired user: {data.get('user_id', 'none')}")
     print(f"paired chat: {data.get('chat_id', 'none')}")
     print(f"transcribe command: {data.get('transcribe_command', default_transcribe_command())}")
-    print(f"migration verification: {'pending' if data.get('migration_pending') else 'complete'}")
     print(f"socket: {'present' if socket_path(home).exists() else 'absent'}")
     if on_macos():
         result = launchctl("print", mac_service_target())
@@ -2201,16 +2057,9 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument(
         "command",
-        choices=["run", "pair", "status", "service-unit", "install-service", "uninstall-service", "allow-root", "migrate", "verify-migration", "package-root"],
+        choices=["run", "pair", "status", "service-unit", "install-service", "uninstall-service", "allow-root", "migrate", "package-root"],
     )
     parser.add_argument("root", nargs="?", help="canonical Pi project root for allow-root")
-    parser.add_argument("--text", action="store_true")
-    parser.add_argument("--text-value")
-    parser.add_argument("--image", action="store_true")
-    parser.add_argument("--image-file")
-    parser.add_argument("--voice", action="store_true")
-    parser.add_argument("--voice-file")
-    parser.add_argument("--proof")
     args = parser.parse_args(argv)
     if args.command == "package-root":
         print(Path(__file__).resolve().parent.parent)
@@ -2222,11 +2071,6 @@ def main(argv: list[str]) -> int:
         return allow_root(home, args.root)
     if args.command == "migrate":
         return migrate(home)
-    if args.command == "verify-migration":
-        return verify_migration(
-            home, args.text, args.image, args.voice, args.voice_file, args.proof,
-            args.text_value, args.image_file,
-        )
     if args.command == "run":
         return run(home)
     if args.command == "pair":

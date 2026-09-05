@@ -17,7 +17,7 @@
 // The bot owns the Unix socket (bin/pi-telegram.py's "bot.sock") and this
 // extension is the client, because the bot outlives every Pi session. The wire
 // protocol is stated once in that script's header.
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import {
@@ -65,7 +65,6 @@ type FinalizedMessage = {
 const RECONNECT_MS = positiveInteger("PI_TELEGRAM_RECONNECT_MS", 2000);
 const RECONNECT_MAX_MS = positiveInteger("PI_TELEGRAM_RECONNECT_MAX_MS", 60000);
 const COMMAND_TIMEOUT_MS = positiveInteger("PI_TELEGRAM_COMMAND_TIMEOUT_MS", 5000);
-const TRANSCRIPTION_STOP_GRACE_MS = 5000;
 // Pi loads this file while the session is starting, and the Pi session
 // lock is recorded from inside that same session moments later, so the first
 // ownership answer of a fresh session is "not yet" rather than "never". These
@@ -147,79 +146,6 @@ function writeDisplayStatus(shown: boolean): void {
   }
 }
 
-function asMigrationVoice(value: unknown): MigrationVoice | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  const path = (value as { path?: unknown }).path;
-  if (typeof path !== "string" || !path.startsWith("/")) return undefined;
-  try {
-    const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_VOICE_BYTES ||
-        (typeof process.getuid === "function" && stat.uid !== process.getuid())) return undefined;
-  } catch {
-    return undefined;
-  }
-  return { path };
-}
-
-function transcribeMigrationVoice(path: string): Promise<string> {
-  const adapter = process.env.PI_TELEGRAM_MIGRATION_ADAPTER ||
-    join(dirname(fileURLToPath(import.meta.url)), "../bin/pi-parakeet-mlx-transcribe.py");
-  const python = process.env.PI_TELEGRAM_PYTHON || "python3";
-  return new Promise((resolve, reject) => {
-    const child = spawn(python, [adapter, path], {
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timedOut = false;
-    let forceTimer: ReturnType<typeof setTimeout> | undefined;
-    const terminate = (signal: "SIGTERM" | "SIGKILL"): void => {
-      try {
-        if (child.pid && process.platform !== "win32") process.kill(-child.pid, signal);
-        else child.kill(signal);
-      } catch {
-        try { child.kill(signal); } catch {}
-      }
-    };
-    const finish = (error?: Error, transcript?: string): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (forceTimer) clearTimeout(forceTimer);
-      if (error) reject(error);
-      else resolve(transcript as string);
-    };
-    const timer = setTimeout(() => {
-      timedOut = true;
-      terminate("SIGTERM");
-      forceTimer = setTimeout(() => {
-        terminate("SIGKILL");
-        child.stdout.destroy();
-        child.stderr.destroy();
-        finish(new Error("migration transcription timed out"));
-      }, TRANSCRIPTION_STOP_GRACE_MS);
-      forceTimer.unref();
-    }, 180000);
-    child.stdout.on("data", (chunk: Buffer) => {
-      if (Buffer.byteLength(stdout, "utf8") < 1048576) stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      if (Buffer.byteLength(stderr, "utf8") < 4096) stderr += chunk.toString("utf8");
-    });
-    child.on("error", (error) => {
-      if (!timedOut) finish(error);
-    });
-    child.on("close", (code) => {
-      if (timedOut) return;
-      if (code !== 0) finish(new Error(stderr.trim().slice(0, 240) || `adapter exited ${code}`));
-      else if (!stdout.trim()) finish(new Error("adapter produced no transcript"));
-      else finish(undefined, stdout.trim());
-    });
-  });
-}
-
 function asQueuedImage(value: unknown): QueuedImage | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const candidate = value as { data?: unknown; mime?: unknown };
@@ -239,7 +165,6 @@ function asQueuedImage(value: unknown): QueuedImage | undefined {
 // extensions its clipboard paste can produce.
 const CLIPBOARD_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const CLIPBOARD_EXTENSIONS = "png|jpg|jpeg|webp";
-const MAX_VOICE_BYTES = positiveInteger("PI_TELEGRAM_MAX_VOICE_BYTES", 20 * 1024 * 1024);
 const MAX_CLIPBOARD_BYTES = positiveInteger("PI_TELEGRAM_MAX_IMAGE_BYTES", 10 * 1024 * 1024);
 const MAX_CLIPBOARD_TOTAL_BYTES = MAX_CLIPBOARD_BYTES * 3;
 const MAX_CLIPBOARD_IMAGES = 10;
@@ -580,28 +505,6 @@ export default function (pi: ExtensionAPI) {
     try {
       frame = JSON.parse(line) as BotFrame;
     } catch {
-      return;
-    }
-    if (frame.t === "migration_verify" && typeof frame.nonce === "string") {
-      const image = asQueuedImage(frame.image);
-      const voice = asMigrationVoice(frame.voice);
-      const text = typeof frame.text === "string" && frame.text.trim() !== "" &&
-        frame.text.length <= 3800;
-      if (text && image && voice) {
-        deliveries = deliveries.then(async () => {
-          await pi.sendUserMessage(frame.text as string, { deliverAs: "steer" });
-          write({ t: "migration_receipt", nonce: frame.nonce, stage: "text" });
-          await pi.sendUserMessage([{ type: "text", text: "migration-image" },
-            { type: "image", data: image.data, mimeType: image.mime }] as never,
-            { deliverAs: "steer" });
-          write({ t: "migration_receipt", nonce: frame.nonce, stage: "image" });
-          const transcript = await transcribeMigrationVoice(voice.path);
-          write({ t: "migration_voice", nonce: frame.nonce, text: transcript });
-        }).catch((error: unknown) => {
-          const detail = error instanceof Error ? error.message : String(error);
-          console.error(`pi-telegram-mirror: migration verification failed: ${detail}`);
-        });
-      }
       return;
     }
     if (frame.t === "deliver" && typeof frame.text === "string" && typeof frame.id === "string") {
