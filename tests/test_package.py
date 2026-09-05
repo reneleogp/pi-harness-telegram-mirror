@@ -43,3 +43,23 @@ def test_permissions_and_no_secret_in_unit():
    assert unit['Install']['WantedBy'] == [['default.target']]
   assert (h/'env').stat().st_mode & 0o077 == 0
 def test_help(): assert subprocess.run([sys.executable,str(ROOT/'bin/pi-telegram.py'),'--help'],capture_output=True).returncode==0
+
+
+def test_extension_delivery_mode_starts_idle_turns_and_steers_when_busy():
+    script = r'''
+import { sendTelegramDelivery } from "./extensions/telegram-delivery.ts";
+const calls = [];
+const send = async (content, options) => calls.push({ content, options });
+await sendTelegramDelivery(send, true, "text");
+await sendTelegramDelivery(send, true, "caption", { data: "png", mime: "image/png" });
+await sendTelegramDelivery(send, false, "text");
+await sendTelegramDelivery(send, false, "caption", { data: "png", mime: "image/png" });
+if (calls[0].options !== undefined || calls[1].options !== undefined) throw new Error("idle delivery did not start a turn");
+if (calls[2].options?.deliverAs !== "steer" || calls[3].options?.deliverAs !== "steer") throw new Error("busy delivery did not steer");
+if (calls[1].content[1].type !== "image" || calls[3].content[1].type !== "image") throw new Error("image delivery was lost");
+'''
+    result = subprocess.run(
+        ['node', '--experimental-strip-types', '--input-type=module', '-'],
+        cwd=ROOT, input=script, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
