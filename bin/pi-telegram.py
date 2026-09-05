@@ -2008,6 +2008,8 @@ def allow_root(home: Path, root: str) -> int:
 def migrate(home: Path) -> int:
     """Copy legacy settings into the new private directory, never mutate legacy data."""
     legacy = Path.home() / ".firstmate-telegram"
+    if home.resolve(strict=False) == legacy.resolve(strict=False):
+        raise TelegramError("migration destination must differ from the legacy directory")
     source_env = legacy / "env"
     source_config = legacy / "config.json"
     if not source_env.is_file() or not source_config.is_file():
@@ -2015,7 +2017,10 @@ def migrate(home: Path) -> int:
     values = read_env(legacy)
     token = values.get("TELEGRAM_BOT_TOKEN", "")
     data = read_config(legacy)
-    if not token or not isinstance(data.get("user_id"), int) or not isinstance(data.get("chat_id"), int):
+    user_id = data.get("user_id")
+    chat_id = data.get("chat_id")
+    valid_id = lambda value: isinstance(value, int) and not isinstance(value, bool)
+    if not token or not valid_id(user_id) or not valid_id(chat_id):
         raise TelegramError("legacy configuration failed validation; nothing was changed")
     private_dir(home)
     write_private_file(env_file(home), "TELEGRAM_BOT_TOKEN=" + token + "\n")
@@ -2070,13 +2075,14 @@ def main(argv: list[str]) -> int:
     if args.command == "package-root":
         print(Path(__file__).resolve().parent.parent)
         return 0
-    home = private_dir(home_dir())
+    home = home_dir()
+    if args.command == "migrate":
+        return migrate(home)
+    home = private_dir(home)
     if args.command == "allow-root":
         if not getattr(args, "root", None):
             raise TelegramError("allow-root requires a project root")
         return allow_root(home, args.root)
-    if args.command == "migrate":
-        return migrate(home)
     if args.command == "run":
         return run(home)
     if args.command == "pair":
