@@ -1945,10 +1945,10 @@ def install_service(home: Path) -> int:
     target.parent.mkdir(parents=True, exist_ok=True)
     write_private_file(target, unit_text(home))
     result = launchctl("bootstrap", f"gui/{os.getuid()}", str(target))
-    if result.returncode != 0 and not any(
-            phrase in result.stdout.lower()
-            for phrase in ("already bootstrapped", "service already loaded")):
-        raise TelegramError(f"launchctl bootstrap failed: {result.stdout.strip()}")
+    if result.returncode != 0:
+        loaded = launchctl("print", mac_service_target())
+        if loaded.returncode != 0:
+            raise TelegramError(f"launchctl bootstrap failed: {result.stdout.strip()}")
     result = launchctl("kickstart", "-k", mac_service_target())
     if result.returncode != 0:
         raise TelegramError(f"launchctl kickstart failed: {result.stdout.strip()}")
