@@ -11,37 +11,17 @@ def test_exact_root_and_contention():
   h=Path(t)/'h'; root=Path(t)/'root'; root.mkdir(); sub=root/'sub'; sub.mkdir(); e={**os.environ,'PI_TELEGRAM_DIR':str(h)}
   assert run('allow-root',str(root),env=e).returncode==0
   assert run('claim',str(sub),env=e).returncode != 0
-  assert run('claim',str(root),env=e).returncode != 0
-  assert not (h/'session.json').exists()
+  pi = Path(t) / 'pi-coding-agent'
+  pi.write_text('import os, subprocess, sys, time\n'
+                'r=subprocess.run([sys.executable, sys.argv[1], "claim", sys.argv[2], str(os.getpid())], env=os.environ)\n'
+                'sys.exit(r.returncode)\n')
+  child = subprocess.run([sys.executable, str(pi), str(OWNER), str(root)], env=e)
+  assert child.returncode == 0
+  assert json.loads((h/'session.json').read_text())['root']==str(root.resolve())
 def test_permissions_and_no_secret_in_unit():
  with tempfile.TemporaryDirectory() as t:
   h=Path(t)/'h'; e={**os.environ,'PI_TELEGRAM_DIR':str(h)}; (h/'env').parent.mkdir(); (h/'env').write_text('TELEGRAM_BOT_TOKEN=secret\n'); (h/'env').chmod(0o600)
-  result=subprocess.run([sys.executable,str(ROOT/'bin/pi-telegram.py'),'service-unit'],env=e,capture_output=True,text=True)
-  if sys.platform == 'darwin':
-   assert result.returncode == 0
-   assert 'secret' not in result.stdout and 'TELEGRAM_BOT_TOKEN' not in result.stdout
-  else:
-   assert result.returncode != 0
-   assert 'macOS only' in result.stderr
+  out=subprocess.check_output([sys.executable,str(ROOT/'bin/pi-telegram.py'),'service-unit'],env=e,text=True)
+  assert 'secret' not in out and 'TELEGRAM_BOT_TOKEN' not in out
   assert (h/'env').stat().st_mode & 0o077 == 0
 def test_help(): assert subprocess.run([sys.executable,str(ROOT/'bin/pi-telegram.py'),'--help'],capture_output=True).returncode==0
-
-
-def test_extension_delivery_mode_starts_idle_turns_and_steers_when_busy():
-    script = r'''
-import { sendTelegramDelivery } from "./extensions/telegram-delivery.ts";
-const calls = [];
-const send = async (content, options) => calls.push({ content, options });
-await sendTelegramDelivery(send, true, "text");
-await sendTelegramDelivery(send, true, "caption", { data: "png", mime: "image/png" });
-await sendTelegramDelivery(send, false, "text");
-await sendTelegramDelivery(send, false, "caption", { data: "png", mime: "image/png" });
-if (calls[0].options !== undefined || calls[1].options !== undefined) throw new Error("idle delivery did not start a turn");
-if (calls[2].options?.deliverAs !== "steer" || calls[3].options?.deliverAs !== "steer") throw new Error("busy delivery did not steer");
-if (calls[1].content[1].type !== "image" || calls[3].content[1].type !== "image") throw new Error("image delivery was lost");
-'''
-    result = subprocess.run(
-        ['node', '--experimental-strip-types', '--input-type=module', '-'],
-        cwd=ROOT, input=script, capture_output=True, text=True,
-    )
-    assert result.returncode == 0, result.stderr

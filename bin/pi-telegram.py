@@ -98,6 +98,7 @@ import platform
 import plistlib
 import secrets
 import shlex
+import shutil
 import signal
 import socket
 import struct
@@ -268,6 +269,10 @@ def audio_dir(home: Path) -> Path:
 def read_env(home: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     try:
+        stat = env_file(home).lstat()
+        if (stat.st_mode & 0o170000 != 0o100000 or stat.st_mode & 0o077 or
+                stat.st_uid != getattr(os, "getuid", lambda: -1)()):
+            return values
         raw = env_file(home).read_text(encoding="utf-8")
     except OSError:
         return values
@@ -1737,7 +1742,7 @@ def run_transcribe(command: str, audio: Path, register: Optional[Any] = None) ->
     argv = transcribe_argv(command, audio)
     try:
         process = subprocess.Popen(
-            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             # Its own process group: a transcriber is usually a wrapper script
             # driving heavier children, and signalling only the wrapper leaves
             # those children alive holding this pipe open.
@@ -1749,16 +1754,35 @@ def run_transcribe(command: str, audio: Path, register: Optional[Any] = None) ->
     # blocking on it: a local speech model can hold the CPU for minutes.
     if register is not None:
         register(process)
+    captured: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
+
+    def drain(name: str, stream: Any, limit: int) -> None:
+        while True:
+            chunk = stream.read(65536)
+            if not chunk:
+                return
+            remaining = limit - len(captured[name])
+            if remaining > 0:
+                captured[name].extend(chunk[:remaining])
+
+    readers = [threading.Thread(target=drain, args=("stdout", process.stdout, 1_048_576)),
+               threading.Thread(target=drain, args=("stderr", process.stderr, 4096))]
+    for reader in readers:
+        reader.start()
     try:
-        stdout, stderr = process.communicate(timeout=TRANSCRIBE_TIMEOUT)
+        process.wait(timeout=TRANSCRIBE_TIMEOUT)
     except subprocess.TimeoutExpired:
         end_process_group(process)
-        process.communicate()
+        process.wait()
+        for reader in readers:
+            reader.join()
         raise TelegramError("transcription timed out") from None
+    for reader in readers:
+        reader.join()
     if process.returncode != 0:
-        detail = (stderr or "").strip()[:200]
+        detail = bytes(captured["stderr"]).decode("utf-8", "replace").strip()[:200]
         raise TelegramError(f"transcription command exited {process.returncode}: {detail}")
-    transcript = (stdout or "").strip()
+    transcript = bytes(captured["stdout"]).decode("utf-8", "replace").strip()
     if not transcript:
         raise TelegramError("transcription produced no text")
     return transcript
@@ -1831,6 +1855,8 @@ def unit_text(home: Path) -> str:
             "ProgramArguments": [sys.executable, str(script), "run"],
             "EnvironmentVariables": {
                 "PI_TELEGRAM_DIR": str(home),
+                "PATH": (str(Path.home() / ".local" / "bin")
+                         + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"),
             },
             "RunAtLoad": True,
             "KeepAlive": True,
