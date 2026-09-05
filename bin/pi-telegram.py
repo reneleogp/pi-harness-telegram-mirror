@@ -136,7 +136,8 @@ def default_transcribe_command() -> str:
 MIRROR_OFF_REPLY = "Telegram mirror is off. Send /telegram_on to enable it."
 OFFLINE_REPLY = "Pi is not running. Your message is queued until it starts."
 ACCEPTED_REPLY = "Pi · Sent to Pi."
-DELIVERY_RETRY_REPLY = "Pi could not accept that message; it remains queued for retry."
+DELIVERY_RETRY_REPLY = "Pi could not accept that message; retrying once."
+DELIVERY_FAILED_REPLY = "Pi could not accept that message after one retry; it was dropped."
 TRANSCRIBING_REPLY = "Transcribing…"
 TERMINAL_LABEL = "You · Terminal"
 SENT_FOOTER = "Sent to Pi"
@@ -486,7 +487,6 @@ class Queued:
     image: Optional[dict[str, str]] = None
     image_bytes: int = 0
     rejection_retries: int = 0
-    retry_scheduled: bool = False
 
 
 @dataclass
@@ -814,17 +814,12 @@ class MirrorBot:
         item = self.pending.pop(message_id, None)
         if item is None:
             return
+        if item.rejection_retries >= 1:
+            await self.send(DELIVERY_FAILED_REPLY, reply_to=item.reply_to)
+            return
+        item.rejection_retries += 1
         self.queue.appendleft(item)
         await self.send(DELIVERY_RETRY_REPLY, reply_to=item.reply_to)
-        if item.rejection_retries < 1:
-            item.rejection_retries += 1
-            await self.pump()
-        elif not item.retry_scheduled:
-            item.retry_scheduled = True
-            asyncio.create_task(self.retry_rejected())
-
-    async def retry_rejected(self) -> None:
-        await asyncio.sleep(1)
         await self.pump()
 
     # --- voice ---
