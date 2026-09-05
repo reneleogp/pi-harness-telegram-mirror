@@ -17,7 +17,7 @@
 // The bot owns the Unix socket (bin/pi-telegram.py's "bot.sock") and this
 // extension is the client, because the bot outlives every Pi session. The wire
 // protocol is stated once in that script's header.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import {
@@ -53,6 +53,7 @@ type BotFrame = {
 };
 
 type QueuedImage = { data: string; mime: string };
+type MigrationVoice = { path: string };
 
 type AssistantPart = { type?: unknown; text?: unknown };
 type FinalizedMessage = {
@@ -143,6 +144,48 @@ function writeDisplayStatus(shown: boolean): void {
     const detail = error instanceof Error ? error.message : String(error);
     console.error(`pi-telegram-mirror: could not persist the status display choice: ${detail}`);
   }
+}
+
+function asMigrationVoice(value: unknown): MigrationVoice | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const path = (value as { path?: unknown }).path;
+  if (typeof path !== "string" || !path.startsWith("/")) return undefined;
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink() ||
+        (typeof process.getuid === "function" && stat.uid !== process.getuid())) return undefined;
+  } catch {
+    return undefined;
+  }
+  return { path };
+}
+
+function transcribeMigrationVoice(path: string): Promise<string> {
+  const adapter = process.env.PI_TELEGRAM_MIGRATION_ADAPTER ||
+    join(dirname(fileURLToPath(import.meta.url)), "../bin/pi-parakeet-mlx-transcribe.py");
+  const python = process.env.PI_TELEGRAM_PYTHON || "python3";
+  return new Promise((resolve, reject) => {
+    const child = spawn(python, [adapter, path], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 2000).unref();
+    }, 180000);
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (Buffer.byteLength(stdout, "utf8") < 1048576) stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (Buffer.byteLength(stderr, "utf8") < 4096) stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => { clearTimeout(timer); reject(error); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) reject(new Error(stderr.trim().slice(0, 240) || `adapter exited ${code}`));
+      else if (!stdout.trim()) reject(new Error("adapter produced no transcript"));
+      else resolve(stdout.trim());
+    });
+  });
 }
 
 function asQueuedImage(value: unknown): QueuedImage | undefined {
@@ -508,16 +551,21 @@ export default function (pi: ExtensionAPI) {
     }
     if (frame.t === "migration_verify" && typeof frame.nonce === "string") {
       const image = asQueuedImage(frame.image);
+      const voice = asMigrationVoice(frame.voice);
       const text = typeof frame.text === "string" && frame.text === `migration-text:${frame.nonce}`;
-      const voice = typeof frame.voice === "string" && /^[a-f0-9]{64}$/.test(frame.voice);
       if (text && image && voice) {
         deliveries = deliveries.then(async () => {
           await pi.sendUserMessage(frame.text as string, { deliverAs: "steer" });
           await pi.sendUserMessage([{ type: "text", text: "migration-image" },
             { type: "image", data: image.data, mimeType: image.mime }] as never,
             { deliverAs: "steer" });
-          activeCtx?.ui.notify("Migration text and image delivered; voice verification is unavailable.", "warning");
-        }).catch(() => undefined);
+          const transcript = await transcribeMigrationVoice(voice.path);
+          await pi.sendUserMessage(transcript, { deliverAs: "steer" });
+          write({ t: "migration_ack", nonce: frame.nonce, text: true, image: true, voice: true });
+        }).catch((error: unknown) => {
+          const detail = error instanceof Error ? error.message : String(error);
+          console.error(`pi-telegram-mirror: migration verification failed: ${detail}`);
+        });
       }
       return;
     }

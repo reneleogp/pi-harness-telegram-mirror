@@ -2052,10 +2052,25 @@ def verify_migration(home: Path, text: bool, image: bool, voice: bool,
     if not (text and image and voice and voice_file):
         raise TelegramError("migration verification requires --text --image --voice --voice-file")
     audio = Path(voice_file)
-    if not audio.is_file() or audio.stat().st_size > MAX_VOICE_BYTES:
-        raise TelegramError("migration voice verification file is missing or too large")
-    raise TelegramError("migration verification requires the Pi voice review adapter")
-    deadline = time.monotonic() + 30
+    try:
+        audio_stat = audio.lstat()
+    except OSError as exc:
+        raise TelegramError(f"migration voice verification file is unavailable: {exc}") from exc
+    if (not audio.is_file() or audio.is_symlink() or audio_stat.st_uid != os.getuid() or
+            audio_stat.st_size > MAX_VOICE_BYTES):
+        raise TelegramError("migration voice verification file is missing, unsafe, or too large")
+    nonce = secrets.token_hex(16)
+    request = {
+        "nonce": nonce,
+        "text": f"migration-text:{nonce}",
+        "image": {
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            "mime": "image/png",
+        },
+        "voice": {"path": str(audio.resolve())},
+    }
+    write_private_file(migration_request_path(home), json.dumps(request))
+    deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
         try:
             evidence = json.loads(migration_ack_path(home).read_text(encoding="utf-8"))
