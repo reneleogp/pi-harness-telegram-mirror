@@ -1,23 +1,14 @@
-# Telegram terminal mirror (macOS)
+# Telegram terminal mirror (WSL and macOS)
 
 The Telegram mirror puts the one Pi terminal conversation on your phone, in both directions.
-It is a private Python bot (`${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py`) running as a macOS LaunchAgent beside the installed Pi package extension (`extensions/telegram-mirror.ts`).
-macOS is the only supported, tested, and managed-service platform; service commands reject other platforms clearly. Direct foreground runs and other portable paths are best-effort and unsupported elsewhere; there is no Linux service infrastructure.
+It is a private Python bot (`bin/pi-telegram.py`) running as a WSL systemd user service or a macOS LaunchAgent beside the installed Pi package extension (`extensions/telegram-mirror.ts`).
+The bot supports Linux/WSL and macOS hosts only.
 
 Telegram text reaches Pi exactly as terminal text: no origin marker, no hidden provenance, and no Telegram-specific instruction.
 Telegram input therefore carries the same authority as anything typed in the terminal, so pair only your own account.
 The bot never starts Pi, never creates a second session, and contains no model or agent loop.
 
 ## Setup
-
-Resolve the installed package directory directly with Pi's machine-readable package listing:
-
-```sh
-export PI_TELEGRAM_PACKAGE="$(pi list --json | python3 -c 'import json,sys; items=json.load(sys.stdin); print(next(x["path"] for x in items if x["name"] == "pi-harness-telegram-mirror"))')"
-"$PI_TELEGRAM_PACKAGE/bin/pi-telegram.py" package-root
-```
-
-The command fails if the package is not installed; no repository checkout is needed.
 
 1. Create a bot with Telegram's `@BotFather` and copy its token.
 2. Store the token privately (this file is never read by the service unit):
@@ -31,7 +22,7 @@ The command fails if the package is not installed; no repository checkout is nee
 3. Pair one account and one private chat, then message the bot from that account:
 
    ```sh
-   ${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py pair
+   bin/pi-telegram.py pair
    ```
 
    The pairing identifiers land in `~/.pi-telegram/config.json`.
@@ -42,36 +33,39 @@ The command fails if the package is not installed; no repository checkout is nee
    ```sh
    brew install ffmpeg uv
    uv tool install 'parakeet-mlx==0.5.2'
-   ${PI_TELEGRAM_PACKAGE}/bin/pi-parakeet-mlx-transcribe.py --help
+   bin/pi-parakeet-mlx-transcribe.py --help
    ```
 
-   The macOS default is the Pi-owned `${PI_TELEGRAM_PACKAGE}/bin/pi-parakeet-mlx-transcribe.py` adapter.
+   The macOS default is the Pi-owned `bin/pi-parakeet-mlx-transcribe.py` adapter.
    It invokes `parakeet-mlx==0.5.2` with the public `mlx-community/parakeet-tdt-0.6b-v3` model, reads its private `.txt` output, and prints only transcript text.
    Prewarm the model before relying on the 180-second voice-note bound, because its first Hugging Face download may take longer:
 
    ```sh
-   ${PI_TELEGRAM_PACKAGE}/bin/pi-parakeet-mlx-transcribe.py /path/to/short-test-audio.m4a
+   bin/pi-parakeet-mlx-transcribe.py /path/to/short-test-audio.m4a
    ```
 
    Do not configure a Hugging Face token for the bot or service.
-   A custom `transcribe_command` remains supported for local adapters.
+   WSL keeps the compatible `parakeet-tdt-0.6b-v3` `transcribe_command` behavior, and a custom `transcribe_command` remains supported on either platform.
 
 5. Install the optional Markdown parser used to format Pi's replies.
+   On WSL, run `sudo apt install python3-mistune`.
    On macOS, install `mistune` into the Python environment that runs the bot, for example `python3 -m pip install mistune`.
    Without it the mirror still works and simply sends every reply as plain text.
 
 6. Install the owner-scoped user service so the bot starts with your user session:
 
    ```sh
-   ${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py install-service
-   ${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py status
+   bin/pi-telegram.py install-service
+   bin/pi-telegram.py status
    ```
 
+   On WSL this writes `~/.config/systemd/user/pi-telegram.service`.
+   Run `loginctl enable-linger "$USER"` if you want it to survive after your last WSL shell closes.
    On macOS this writes `~/Library/LaunchAgents/com.pi.telegram.plist` and starts it with `launchctl` in your GUI user domain.
    A LaunchAgent may be denied access when the repository is under a privacy-protected Documents location; use a normal development directory or the documented foreground process rather than granting broad access silently.
    The plist contains only the private directory and Pi home paths, never the Telegram token.
-   `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py service-unit` prints the macOS LaunchAgent plist without installing it.
-   `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py uninstall-service` stops and removes the service and is safe to repeat.
+   `bin/pi-telegram.py service-unit` prints the current platform's unit without installing it.
+   `bin/pi-telegram.py uninstall-service` stops and removes the service and is safe to repeat.
    After changing the script or extension, run `uninstall-service` followed by `install-service` to restart the service.
 
 The Pi half is loaded by Pi's package manager from the installed package manifest; no project-local extension directory is required.
@@ -84,7 +78,7 @@ If this extension is installed globally, it loads in every crewmate and scout as
 
 Two independent rules prevent that:
 
-- The extension mirrors only from the session that holds the Pi home's session lock, checked against the running process's own ancestry. On macOS, the recorded process-start identity uses `ps`'s fixed C locale, so LaunchAgent and interactive sessions produce the same exact value.
+- The extension mirrors only from the session that holds the Pi home's session lock, checked against the running process's own ancestry.
   While the extension waits for its startup record, absent, invalid, dead-session, and unrelated-process records remain retryable, so a leftover record cannot keep the mirror dark until you reload Pi.
   Every other Pi session stays completely inert: no connection, no footer, no commands.
 - The bot serves one session at a time and refuses a second connection instead of handing the chat over to it.
@@ -188,8 +182,8 @@ A message typed in Telegram is already visible there, so it is not echoed back a
 
 ## Sending to Pi
 
-Telegram text and images enter an in-memory FIFO in arrival order and are submitted through Pi's normal user input.
-When Pi is idle, each message starts a new Pi turn without steering options; while Pi is working, messages steer the run exactly like typing them in the terminal, so Pi keeps its own batching and continuation behavior.
+Telegram text enters an in-memory FIFO in arrival order and is submitted through Pi's normal user input.
+Messages sent back-to-back while Pi is working steer the run exactly like typing them in the terminal, so Pi keeps its own batching and continuation behavior.
 When Pi accepts a message, `Pi · Sent to Pi.` replies to that exact message; that means Pi accepted the input, not that Pi finished answering.
 That receipt can be switched off (see Delivery confirmations).
 
@@ -249,22 +243,22 @@ Every button action is bound to the current transcript revision, so a stale or r
 
 - One paired account, one private chat, one Pi session; a second session is refused rather than promoted (see Only your own session is mirrored).
 - Pi's replies are rendered as Telegram HTML so code, commands, and emphasis stay readable; if Telegram refuses the markup, the same text is sent again as plain text rather than lost.
-  Formatting uses the optional `mistune` dependency described in Setup; without it every reply is simply sent plain.
+  Formatting needs `python3-mistune` (`sudo apt install python3-mistune`); without it every reply is simply sent plain.
 - Transport statuses, terminal echoes, and voice transcripts are sent as plain text, so they arrive exactly as written.
 - Only the paired chat can send images, and the primary-session rule covers them: a worker session can neither receive nor deliver one.
 - The bot owns mirror mode and delivery confirmations for both surfaces; the terminal only shows and changes what the bot publishes.
 - Stopping or restarting the service is bounded: a running transcription and everything it started are ended, the connected terminal session is released, and the bot exits rather than waiting on work it cannot interrupt.
-  macOS uses the owner-scoped LaunchAgent lifecycle.
+  The WSL systemd unit sets `TimeoutStopSec=20` to match; macOS uses the owner-scoped LaunchAgent lifecycle.
 - At most 32 untouched voice transcripts are kept; older ones are dropped with their temporary audio, so cards you never answer cannot pile up.
 - Transport statuses stay attached to the exact message they describe, while Pi's replies are never threaded (see Reply threading).
 - The service unit holds no token and no message content; the token stays in `~/.pi-telegram/env` and pairing stays in `config.json`.
 - Temporary voice audio is owner-only and is deleted after send, cancel, failure, and at bot start and stop; images are never written to disk at all.
 - Transcription memory belongs to the local speech model rather than the bot process, and the service's memory accounting includes the transcriber and its children.
-- `PI_TELEGRAM_DIR` moves the private directory; `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py --help` owns the remaining flags and environment.
+- `PI_TELEGRAM_DIR` moves the private directory; `bin/pi-telegram.py --help` owns the remaining flags and environment.
 - If macOS reports a missing dependency, check `command -v ffmpeg`, `command -v parakeet-mlx`, and the service PATH; rerun the adapter in the foreground to diagnose model download failures.
 - A timeout usually means the model was not prewarmed or the Mac is memory constrained; retry after prewarming and close other memory-heavy applications.
 
-The wire protocol between the bot and the Pi extension is stated once in `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py`'s header.
+The wire protocol between the bot and the Pi extension is stated once in `bin/pi-telegram.py`'s header.
 
 Regression entry points:
 
