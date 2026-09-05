@@ -54,12 +54,13 @@ def parse_systemd_unit(text):
             continue
         assert section is not None and "=" in line
         key, value = line.split("=", 1)
-        sections[section].setdefault(key, []).append(shlex.split(value, comments=False))
+        parsed = shlex.split(value, comments=False)
+        sections[section].setdefault(key, []).append([item.replace("%%", "%") for item in parsed])
     return sections
 
 
 def test_service_unit_is_platform_native_and_secret_free(tmp_path):
-    state_dir = tmp_path / "state with spaces"
+    state_dir = tmp_path / "state with spaces %n"
     env = {**os.environ, "PI_TELEGRAM_DIR": str(state_dir)}
     result = subprocess.run([sys.executable, str(BOT), "service-unit"], env=env, capture_output=True, text=True)
     if sys.platform == "darwin":

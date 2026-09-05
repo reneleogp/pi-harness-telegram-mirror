@@ -1919,6 +1919,8 @@ def systemd_quote(value: str) -> str:
     for char in value:
         if char in ('\\', '"'):
             escaped.append('\\' + char)
+        elif char == '%':
+            escaped.append('%%')
         elif ord(char) < 0x20 or ord(char) == 0x7f:
             escaped.append(f'\\x{ord(char):02x}')
         else:
