@@ -504,6 +504,7 @@ class MirrorBot:
     prompts: dict[int, int] = field(default_factory=dict)
     client: Optional[asyncio.StreamWriter] = None
     client_features: set = field(default_factory=set)
+    client_ready: bool = True
     background: set = field(default_factory=set)
     transcribers: set = field(default_factory=set)
     active_transcription: bool = False
@@ -776,6 +777,8 @@ class MirrorBot:
         return sum(item.image_bytes for item in (*self.queue, *self.pending.values()))
 
     async def pump(self) -> None:
+        if self.client is not None and not self.client_ready:
+            return
         while self.queue and self.client is not None:
             item = self.queue.popleft()
             if item.image and "image" not in self.client_features:
@@ -1003,7 +1006,7 @@ class MirrorBot:
         # so. Refuse visibly instead of delivering something that vanishes.
         # While no session is connected the capability is simply unknown, so the
         # image queues like any other message and pump() decides on delivery.
-        if self.connected and "image" not in self.client_features:
+        if self.connected and self.client_ready and "image" not in self.client_features:
             log("refusing an image: the connected Pi session has no image support")
             await self.send(IMAGE_UNSUPPORTED_SESSION_REPLY, reply_to=message_id)
             return
@@ -1054,6 +1057,7 @@ class MirrorBot:
             return
         self.client = None
         self.client_features = set()
+        self.client_ready = False
         # Anything delivered but not yet confirmed goes back to the front of the
         # queue in order. A session that vanished between accepting a message
         # and confirming it can therefore see that one message twice, which is
@@ -1085,6 +1089,7 @@ class MirrorBot:
             return
         self.client = writer
         self.client_features = set()
+        self.client_ready = False
         log(f"mirroring for {peer_description(writer)}")
         await self.broadcast_state()
         # The queue drains once hello names what this session can render.
@@ -1117,6 +1122,7 @@ class MirrorBot:
             self.client_features = {
                 str(name) for name in features if isinstance(name, str)
             } if isinstance(features, list) else set()
+            self.client_ready = True
             # State already went out when the connection was accepted.
             await self.pump()
             return
