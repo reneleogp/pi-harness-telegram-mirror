@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from typing import NoReturn
 
@@ -74,11 +75,24 @@ def main() -> int:
 
             signal.signal(signal.SIGTERM, stop)
             signal.signal(signal.SIGINT, stop)
-            stderr, _ = child.communicate()
+            diagnostics = bytearray()
+
+            def drain() -> None:
+                while True:
+                    chunk = child.stderr.read(65536)
+                    if not chunk:
+                        return
+                    if len(diagnostics) < 4096:
+                        diagnostics.extend(chunk[:4096 - len(diagnostics)])
+
+            reader = threading.Thread(target=drain)
+            reader.start()
+            child.wait()
+            reader.join()
         except (OSError, ValueError) as exc:
             fail(f"could not start parakeet-mlx: {exc}")
         if child.returncode != 0:
-            detail = (stderr or b"").decode("utf-8", "replace").strip()[:240]
+            detail = bytes(diagnostics).decode("utf-8", "replace").strip()[:240]
             fail(f"parakeet-mlx exited with status {child.returncode}"
                  + (f": {detail}" if detail else ""))
         try:

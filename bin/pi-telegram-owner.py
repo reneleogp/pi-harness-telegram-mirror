@@ -49,12 +49,10 @@ def is_pi_process(pid):
     if pid != os.getppid(): return False
     try:
         if sys.platform == "darwin":
-            command = subprocess.check_output(["ps", "-o", "command=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL)
+            executable = subprocess.check_output(["ps", "-o", "comm=", "-p", str(pid)], text=True, stderr=subprocess.DEVNULL).strip()
         else:
-            command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\\0", b" ").decode()
-        parts = command.split()
-        executable = Path(parts[0]).name if parts else ""
-        return executable in {"pi", "pi.js", "pi.mjs"} or "pi-coding-agent" in command
+            executable = os.readlink(f"/proc/{pid}/exe")
+        return Path(executable).name == "pi"
     except (OSError, subprocess.SubprocessError, UnicodeError):
         return False
 
