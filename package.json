@@ -1,0 +1,11 @@
+{
+  "name": "pi-harness-telegram-mirror",
+  "version": "1.0.0",
+  "description": "A standalone bidirectional Telegram terminal mirror for Pi",
+  "license": "MIT",
+  "keywords": ["pi-package", "pi", "telegram", "terminal"],
+  "repository": {"type": "git", "url": "https://github.com/reneleogp/pi-harness-telegram-mirror"},
+  "engines": {"node": ">=18"},
+  "peerDependencies": {"@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*"},
+  "pi": {"extensions": ["./extensions/telegram-mirror.ts"]}
+}
