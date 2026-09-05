@@ -166,9 +166,11 @@ const MAX_CLIPBOARD_TOTAL_BYTES = MAX_CLIPBOARD_BYTES * 3;
 const MAX_CLIPBOARD_IMAGES = 10;
 const MAX_OUTSTANDING_IMAGE_WRITE_BYTES = positiveInteger(
   "PI_TELEGRAM_MAX_OUTSTANDING_WRITE_BYTES",
-  Math.ceil(MAX_CLIPBOARD_TOTAL_BYTES / 3) * 4 + 3 * 1024 * 1024,
+  Math.ceil(MAX_CLIPBOARD_TOTAL_BYTES / 3) * 4 + 4 * 1024 * 1024,
 );
-const MAX_FRAME_BYTES = positiveInteger("PI_TELEGRAM_MAX_FRAME_BYTES", 18 * 1024 * 1024);
+const MAX_FRAME_BYTES = positiveInteger(
+  "PI_TELEGRAM_MAX_FRAME_BYTES", MAX_OUTSTANDING_IMAGE_WRITE_BYTES,
+);
 
 function imageMimeFromMagic(bytes: Buffer): string | undefined {
   if (bytes.length >= 8 && bytes.subarray(0, 8).equals(
