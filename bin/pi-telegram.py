@@ -113,7 +113,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from html import escape
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 try:  # Debian/Ubuntu: python3-mistune
     import mistune
@@ -302,7 +302,7 @@ def read_config(home: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def write_private_file(target: Path, content: str) -> None:
+def write_private_file(target: Path, content: Union[str, bytes]) -> None:
     private_dir(target.parent)
     try:
         if target.is_symlink():
@@ -313,7 +313,9 @@ def write_private_file(target: Path, content: str) -> None:
     temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        mode = "wb" if isinstance(content, bytes) else "w"
+        kwargs = {} if mode == "wb" else {"encoding": "utf-8"}
+        with os.fdopen(descriptor, mode, **kwargs) as stream:
             descriptor = -1
             stream.write(content)
             stream.flush()
@@ -445,8 +447,7 @@ class TelegramApi:
         return await asyncio.to_thread(self.request_sync, method, params or {}, timeout)
 
     def _download(self, file_path: str, target: Path, timeout: float) -> None:
-        target.write_bytes(self._fetch(file_path, MAX_VOICE_BYTES, timeout))
-        target.chmod(0o600)
+        write_private_file(target, self._fetch(file_path, MAX_VOICE_BYTES, timeout))
 
     def _fetch(self, file_path: str, limit: int, timeout: float) -> bytes:
         url = f"{self._base}/file/bot{self._token}/{file_path}"
@@ -2040,8 +2041,11 @@ def migrate(home: Path) -> int:
         raise TelegramError("legacy configuration failed validation; nothing was changed")
     private_dir(home)
     write_private_file(env_file(home), "TELEGRAM_BOT_TOKEN=" + token + "\n")
-    data["migration_pending"] = True
-    write_config(home, data)
+    existing = read_config(home)
+    merged = dict(data)
+    merged.update(existing)
+    merged["migration_pending"] = True
+    write_config(home, merged)
     print("migration copied and validated; legacy configuration was not changed")
     return 0
 

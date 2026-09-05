@@ -111,7 +111,10 @@ function claim(cwd: string): boolean {
 
 function readDisplayStatus(): boolean {
   try {
-    return readFileSync(join(botHome(), DISPLAY_SETTING_FILE), "utf8").trim() !== "off";
+    const target = join(botHome(), DISPLAY_SETTING_FILE);
+    const stat = lstatSync(target);
+    if (stat.isSymbolicLink() || !stat.isFile() || (stat.mode & 0o077) !== 0) return true;
+    return readFileSync(target, "utf8").trim() !== "off";
   } catch {
     return true;
   }
