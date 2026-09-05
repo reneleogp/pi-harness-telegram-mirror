@@ -47,6 +47,8 @@ type BotFrame = {
   image?: unknown;
   mirror?: unknown;
   confirmations?: unknown;
+  nonce?: unknown;
+  voice?: unknown;
 };
 
 type QueuedImage = { data: string; mime: string };
@@ -495,6 +497,10 @@ export default function (pi: ExtensionAPI) {
     try {
       frame = JSON.parse(line) as BotFrame;
     } catch {
+      return;
+    }
+    if (frame.t === "migration_verify" && typeof frame.nonce === "string") {
+      write({ t: "migration_ack", nonce: frame.nonce, text: true, image: true, voice: true });
       return;
     }
     if (frame.t === "deliver" && typeof frame.text === "string" && typeof frame.id === "string") {

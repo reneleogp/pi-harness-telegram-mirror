@@ -265,6 +265,14 @@ def socket_path(home: Path) -> Path:
     return home / "bot.sock"
 
 
+def migration_request_path(home: Path) -> Path:
+    return home / "migration-verify.request"
+
+
+def migration_ack_path(home: Path) -> Path:
+    return home / "migration-verify.ack"
+
+
 def audio_dir(home: Path) -> Path:
     return home / "audio"
 
@@ -1106,6 +1114,11 @@ class MirrorBot:
         if kind == "accepted":
             await self.on_accepted(str(frame.get("id")))
             return
+        if kind == "migration_ack":
+            nonce = frame.get("nonce")
+            if isinstance(nonce, str) and all(frame.get(key) is True for key in ("text", "image", "voice")):
+                write_private_file(migration_ack_path(self.config.home), json.dumps({"nonce": nonce, "text": True, "image": True, "voice": True}))
+            return
         if kind == "terminal":
             if self.mirror_on and isinstance(frame.get("text"), str):
                 await self.mirror_terminal(frame["text"], frame.get("images"))
@@ -1138,6 +1151,20 @@ class MirrorBot:
             await self.broadcast_state()
 
     # --- run loop ---
+
+    async def migration_verifier(self) -> None:
+        while not self._stopping:
+            request = migration_request_path(self.config.home)
+            try:
+                payload = json.loads(request.read_text(encoding="utf-8"))
+                nonce = payload["nonce"]
+            except (OSError, json.JSONDecodeError, KeyError, TypeError):
+                await asyncio.sleep(0.2)
+                continue
+            if self.client is not None and not self.client.is_closing():
+                await self.write_frame({"t": "migration_verify", "nonce": nonce})
+                remove_file(request)
+            await asyncio.sleep(0.2)
 
     async def register_menu(self) -> None:
         """Publish the menu aliases, scoped to the paired chat.
@@ -1196,6 +1223,9 @@ class MirrorBot:
         menu = asyncio.create_task(self.register_menu())
         self.background.add(menu)
         menu.add_done_callback(self.background.discard)
+        verify = asyncio.create_task(self.migration_verifier())
+        self.background.add(verify)
+        verify.add_done_callback(self.background.discard)
         try:
             await asyncio.wait({poller, waiter}, return_when=asyncio.FIRST_COMPLETED)
         finally:
@@ -2051,18 +2081,23 @@ def migrate(home: Path) -> int:
 
 def verify_migration(home: Path, text: bool, image: bool, voice: bool,
                      voice_file: Optional[str], proof: Optional[str]) -> int:
-    if not (text and image and voice and voice_file and proof):
-        raise TelegramError("migration verification requires delivery flags, --voice-file, and --proof")
-    proof_path = Path(proof)
-    try:
-        stat = proof_path.lstat()
-        evidence = json.loads(proof_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        raise TelegramError("migration verification proof is unreadable")
-    if (stat.st_mode & 0o170000 != 0o100000 or stat.st_mode & 0o077 or
-            stat.st_uid != getattr(os, "getuid", lambda: -1)() or
-            not all(evidence.get(key) is True for key in ("text", "image", "voice"))):
-        raise TelegramError("migration verification proof lacks Pi delivery acknowledgements")
+    if not (text and image and voice and voice_file):
+        raise TelegramError("migration verification requires --text --image --voice --voice-file")
+    nonce = secrets.token_urlsafe(24)
+    write_private_file(migration_request_path(home), json.dumps({"nonce": nonce}))
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            evidence = json.loads(migration_ack_path(home).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            time.sleep(0.2)
+            continue
+        if evidence.get("nonce") == nonce and all(evidence.get(key) is True for key in ("text", "image", "voice")):
+            break
+        time.sleep(0.2)
+    else:
+        raise TelegramError("migration verification requires live Pi acknowledgements")
+    remove_file(migration_ack_path(home))
     audio = Path(voice_file)
     if not audio.is_file() or audio.stat().st_size > MAX_VOICE_BYTES:
         raise TelegramError("migration voice verification file is missing or too large")
