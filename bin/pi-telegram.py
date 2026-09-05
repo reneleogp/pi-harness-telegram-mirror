@@ -3,8 +3,7 @@
 
 One private Telegram bot that mirrors the one Pi terminal conversation
 in both directions. It runs beside Pi as a WSL systemd user service or a macOS
-LaunchAgent and talks to the
-tracked Pi extension .pi/extensions/pi-telegram-mirror.ts over one local Unix
+LaunchAgent and talks to the installed Pi package extension over one local Unix
 socket. The bot contains no model, agent loop, or Pi reasoning.
 
 Layout (one private directory, owner-only, default ~/.pi-telegram,
@@ -2113,7 +2112,7 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument(
         "command",
-        choices=["run", "pair", "status", "service-unit", "install-service", "uninstall-service", "allow-root", "migrate", "verify-migration"],
+        choices=["run", "pair", "status", "service-unit", "install-service", "uninstall-service", "allow-root", "migrate", "verify-migration", "package-root"],
     )
     parser.add_argument("root", nargs="?", help="canonical Pi project root for allow-root")
     parser.add_argument("--text", action="store_true")
@@ -2121,6 +2120,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--voice", action="store_true")
     parser.add_argument("--voice-file")
     args = parser.parse_args(argv)
+    if args.command == "package-root":
+        print(Path(__file__).resolve().parent.parent)
+        return 0
     home = private_dir(home_dir())
     if args.command == "allow-root":
         if not getattr(args, "root", None):
