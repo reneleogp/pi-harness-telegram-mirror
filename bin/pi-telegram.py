@@ -235,7 +235,11 @@ def log(message: str) -> None:
 
 
 def private_dir(path: Path) -> Path:
+    if path.is_symlink():
+        raise TelegramError(f"refusing symlink state directory {path}")
     path.mkdir(parents=True, exist_ok=True)
+    if not path.is_dir():
+        raise TelegramError(f"state path is not a directory: {path}")
     try:
         path.chmod(0o700)
     except OSError:
