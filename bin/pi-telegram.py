@@ -2050,25 +2050,22 @@ def migrate(home: Path) -> int:
 
 
 def verify_migration(home: Path, text: bool, image: bool, voice: bool,
-                     voice_file: Optional[str]) -> int:
-    if not (text and image and voice and voice_file):
-        raise TelegramError("migration verification requires --text --image --voice --voice-file")
-    config = load_config(home)
-    if not socket_path(home).exists():
-        raise TelegramError("migration verification requires a connected Pi session")
-    api = TelegramApi(config.api_base, config.token)
-    chat_id = str(config.chat_id)
-    api.request_sync("sendMessage", {"chat_id": chat_id,
-                                      "text": "Pi Telegram migration text verification"})
-    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScK8WQAAAABJRU5ErkJggg==")
-    asyncio.run(api.upload("sendPhoto", {"chat_id": chat_id}, [("photo", "migration.png", png)]))
+                     voice_file: Optional[str], proof: Optional[str]) -> int:
+    if not (text and image and voice and voice_file and proof):
+        raise TelegramError("migration verification requires delivery flags, --voice-file, and --proof")
+    proof_path = Path(proof)
+    try:
+        stat = proof_path.lstat()
+        evidence = json.loads(proof_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raise TelegramError("migration verification proof is unreadable")
+    if (stat.st_mode & 0o170000 != 0o100000 or stat.st_mode & 0o077 or
+            stat.st_uid != getattr(os, "getuid", lambda: -1)() or
+            not all(evidence.get(key) is True for key in ("text", "image", "voice"))):
+        raise TelegramError("migration verification proof lacks Pi delivery acknowledgements")
     audio = Path(voice_file)
     if not audio.is_file() or audio.stat().st_size > MAX_VOICE_BYTES:
         raise TelegramError("migration voice verification file is missing or too large")
-    payload = audio.read_bytes()
-    if len(payload) > MAX_VOICE_BYTES:
-        raise TelegramError("migration voice verification file is too large")
-    asyncio.run(api.upload("sendVoice", {"chat_id": chat_id}, [("voice", audio.name, payload)]))
     data = read_config(home)
     data["migration_pending"] = False
     write_config(home, data)
@@ -2121,6 +2118,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--image", action="store_true")
     parser.add_argument("--voice", action="store_true")
     parser.add_argument("--voice-file")
+    parser.add_argument("--proof")
     args = parser.parse_args(argv)
     if args.command == "package-root":
         print(Path(__file__).resolve().parent.parent)
@@ -2133,7 +2131,7 @@ def main(argv: list[str]) -> int:
     if args.command == "migrate":
         return migrate(home)
     if args.command == "verify-migration":
-        return verify_migration(home, args.text, args.image, args.voice, args.voice_file)
+        return verify_migration(home, args.text, args.image, args.voice, args.voice_file, args.proof)
     if args.command == "run":
         return run(home)
     if args.command == "pair":
