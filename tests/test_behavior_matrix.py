@@ -73,7 +73,9 @@ def test_service_unit_is_platform_native_and_secret_free(tmp_path):
         assert result.returncode == 0
         unit = parse_systemd_unit(result.stdout)
         assert unit["Service"]["Type"] == [["simple"]]
-        assert unit["Service"]["Environment"] == [[f"PI_TELEGRAM_DIR={state_dir}"]]
+        environments = unit["Service"]["Environment"]
+        assert [f"PI_TELEGRAM_DIR={state_dir}"] in environments
+        assert [f"PATH={Path.home() / '.local' / 'bin'}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"] in environments
         assert unit["Install"]["WantedBy"] == [["default.target"]]
         assert "TELEGRAM_BOT_TOKEN" not in result.stdout
     else:

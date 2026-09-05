@@ -1948,6 +1948,7 @@ def unit_text(home: Path) -> str:
                 "[Service]\nType=simple\n"
                 f"ExecStart={shlex.join([sys.executable, str(script), 'run'])}\n"
                 f"Environment=PI_TELEGRAM_DIR={systemd_quote(str(home))}\n"
+                f"Environment=PATH={systemd_quote(str(Path.home() / '.local' / 'bin') + ':/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin')}\n"
                 "Restart=on-failure\nRestartSec=3\n\n"
                 "[Install]\nWantedBy=default.target\n")
     raise TelegramError("the Telegram mirror service supports Linux and macOS")

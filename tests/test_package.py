@@ -37,7 +37,9 @@ def test_permissions_and_no_secret_in_unit():
   elif sys.platform == 'linux':
    unit = parse_systemd_unit(result.stdout)
    assert unit['Service']['Type'] == [['simple']]
-   assert unit['Service']['Environment'] == [[f'PI_TELEGRAM_DIR={h}']]
+   environments = unit['Service']['Environment']
+   assert [f'PI_TELEGRAM_DIR={h}'] in environments
+   assert [f"PATH={Path.home() / '.local' / 'bin'}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"] in environments
    assert unit['Install']['WantedBy'] == [['default.target']]
   assert (h/'env').stat().st_mode & 0o077 == 0
 def test_help(): assert subprocess.run([sys.executable,str(ROOT/'bin/pi-telegram.py'),'--help'],capture_output=True).returncode==0
