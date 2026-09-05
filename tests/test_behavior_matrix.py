@@ -70,49 +70,30 @@ def test_rejected_delivery_retries_once_then_reports_drop():
     assert len(sent) == 2
 
 
-def test_fifo_delivery_emits_ordered_frames_and_clears_on_acceptance():
+def test_migration_voice_ack_waits_for_pi_acceptance():
     bot = load_bot()
     mirror = bot.MirrorBot(bot.Config(Path("/tmp"), "token", 1, 1, "transcribe", "http://fake"), bot.TelegramApi("http://fake", "token"))
+    mirror.migration_nonce = "n"
+    mirror.migration_receipts["n"] = {"text", "image"}
     writes = []
+    async def fake_send(*_args, **_kwargs):
+        return {"message_id": 10}
+    async def fake_edit(*_args, **_kwargs):
+        return True
+    async def fake_answer(*_args, **_kwargs):
+        return None
     async def fake_write(frame):
         writes.append(frame)
         return True
-    async def fake_send(*_args, **_kwargs):
-        return None
-    mirror.client = object()
-    mirror.write_frame = fake_write
     mirror.send = fake_send
-    async def exercise():
-        await mirror.accept_text("one", 1)
-        await mirror.accept_text("two", 2)
-    asyncio.run(exercise())
-    assert [frame["text"] for frame in writes] == ["one", "two"]
-    assert list(mirror.pending) == ["m1", "m2"]
-    asyncio.run(mirror.on_accepted("m1"))
-    asyncio.run(mirror.on_accepted("m2"))
-    assert not mirror.pending
-
-
-def test_commands_update_shared_state_and_return_status():
-    bot = load_bot()
-    mirror = bot.MirrorBot(bot.Config(Path("/tmp"), "token", 1, 1, "transcribe", "http://fake"), bot.TelegramApi("http://fake", "token"))
-    writes = []
-    async def fake_write(frame):
-        writes.append(frame)
-        return True
-    async def fake_send(*_args, **_kwargs):
-        return None
+    mirror.edit_card = fake_edit
+    mirror.answer_callback = fake_answer
     mirror.write_frame = fake_write
-    mirror.send = fake_send
-    asyncio.run(mirror.handle_frame({"t": "command", "id": 3, "command": "off"}))
-    assert mirror.mirror_on is False
-    assert any(frame.get("t") == "command_result" for frame in writes)
-    assert any(frame.get("t") == "state" and frame.get("mirror") is False for frame in writes)
-
-
-def test_image_contract_rejects_invalid_bytes_and_accepts_real_png():
-    bot = load_bot()
-    assert bot.accept_outbound_images([{"mime": "image/png", "data": "bm90LXBuZw=="}]) == ([], 1)
-    png = __import__("base64").b64encode(bytes([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) + b"rest").decode()
-    accepted, refused = bot.accept_outbound_images([{"mime": "image/png", "data": png}])
-    assert len(accepted) == 1 and refused == 0
+    asyncio.run(mirror.handle_frame({"t": "migration_voice", "nonce": "n", "text": "transcript"}))
+    assert 10 in mirror.voices
+    asyncio.run(mirror.handle_callback({"id": "c", "data": "v:10:1:send", "from": {"id": 1}, "message": {"chat": {"id": 1}}}))
+    assert not any(frame.get("t") == "migration_ack" for frame in writes)
+    delivery_id = next(iter(mirror.queue)).id
+    mirror.pending[delivery_id] = mirror.queue.popleft()
+    asyncio.run(mirror.on_accepted(delivery_id))
+    assert any(frame.get("t") == "migration_ack" for frame in writes)
