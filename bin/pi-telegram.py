@@ -293,11 +293,32 @@ def read_config(home: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def write_private_file(target: Path, content: str) -> None:
+    private_dir(target.parent)
+    try:
+        if target.is_symlink():
+            raise TelegramError(f"refusing symlink state file {target}")
+        target.lstat()
+    except FileNotFoundError:
+        pass
+    temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = -1
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    except Exception:
+        if descriptor >= 0:
+            os.close(descriptor)
+        remove_file(temporary)
+        raise
+
+
 def write_config(home: Path, data: dict[str, Any]) -> None:
-    private_dir(home)
-    target = config_file(home)
-    target.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    target.chmod(0o600)
+    write_private_file(config_file(home), json.dumps(data, indent=2, sort_keys=True) + "\n")
 
 
 @dataclass
@@ -2006,8 +2027,7 @@ def migrate(home: Path) -> int:
     if not token or not isinstance(data.get("user_id"), int) or not isinstance(data.get("chat_id"), int):
         raise TelegramError("legacy configuration failed validation; nothing was changed")
     private_dir(home)
-    env_file(home).write_text("TELEGRAM_BOT_TOKEN=" + token + "\n", encoding="utf-8")
-    env_file(home).chmod(0o600)
+    write_private_file(env_file(home), "TELEGRAM_BOT_TOKEN=" + token + "\n")
     write_config(home, data)
     print("migration copied and validated; legacy configuration was not changed")
     return 0
