@@ -775,10 +775,13 @@ class MirrorBot:
 
     async def accept_text(self, text: str, reply_to: int,
                           image: Optional[dict[str, str]] = None,
-                          image_bytes: int = 0) -> Optional[str]:
+                          image_bytes: int = 0,
+                          migration_nonce: Optional[str] = None) -> Optional[str]:
         item = Queued(id=self.next_id(), text=text, reply_to=reply_to,
                       image=image, image_bytes=image_bytes)
         self.queue.append(item)
+        if migration_nonce is not None:
+            self.migration_delivery_ids[item.id] = migration_nonce
         if not self.connected:
             await self.send(OFFLINE_REPLY, reply_to=reply_to)
         await self.pump()
@@ -945,9 +948,7 @@ class MirrorBot:
         if action == "send":
             migration_nonce = entry.migration_nonce
             await self.finish_voice(entry, SENT_FOOTER)
-            delivery_id = await self.accept_text(entry.text, entry.voice_id)
-            if migration_nonce is not None and delivery_id is not None:
-                self.migration_delivery_ids[delivery_id] = migration_nonce
+            await self.accept_text(entry.text, entry.voice_id, migration_nonce=migration_nonce)
             return
         if action == "cancel":
             await self.finish_voice(entry, CANCELLED_FOOTER)
