@@ -2,7 +2,7 @@
 
 The Telegram mirror puts the one Pi terminal conversation on your phone, in both directions.
 It is a private Python bot (`${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py`) running as a macOS LaunchAgent beside the installed Pi package extension (`extensions/telegram-mirror.ts`).
-The bot supports macOS hosts only; service commands reject other platforms clearly.
+macOS is the only supported, tested, and managed-service platform; service commands reject other platforms clearly. Direct foreground runs and other portable paths are best-effort and unsupported elsewhere; there is no Linux service infrastructure.
 
 Telegram text reaches Pi exactly as terminal text: no origin marker, no hidden provenance, and no Telegram-specific instruction.
 Telegram input therefore carries the same authority as anything typed in the terminal, so pair only your own account.
