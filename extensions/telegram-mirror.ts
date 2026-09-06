@@ -365,13 +365,8 @@ function finalVisibleReply(message: unknown): string {
   return assistantText(message);
 }
 
-export function formatTokenUsage(ctx: ExtensionContext | null, quotaText: string): string {
-  if (!ctx) return "Provider quota: unavailable (Pi is disconnected).";
-  const context = ctx.getContextUsage();
-  const contextText = context && context.tokens !== null && Number.isFinite(context.contextWindow)
-    ? `${context.tokens} / ${context.contextWindow} tokens (${context.percent === null ? "unavailable" : `${context.percent}%`})`
-    : "unavailable";
-  return `${quotaText}\nPi session context (separate from provider quota): ${contextText}`;
+export function formatTokenUsage(_ctx: ExtensionContext | null, quotaText: string): string {
+  return quotaText || "GPT quota unavailable.";
 }
 
 export default function (pi: ExtensionAPI) {

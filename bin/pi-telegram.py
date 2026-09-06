@@ -785,7 +785,7 @@ class MirrorBot:
             return await asyncio.wait_for(future, timeout=20)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self.command_waiters.pop(command_id, None)
-            return "Provider quota unavailable: Pi did not answer."
+            return TOKEN_USAGE_UNAVAILABLE
 
     async def broadcast_state(self) -> None:
         """Push the state Pi's footer and settings render, after every change."""

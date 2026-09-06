@@ -124,9 +124,9 @@ def test_token_usage_routes_to_pi_without_queueing_conversation_text():
         task = asyncio.create_task(mirror.request_pi_command(bot.TOKEN_USAGE_COMMAND))
         await asyncio.sleep(0)
         assert writes == [{"t": "command", "id": 1, "command": "token_usage"}]
-        await mirror.handle_frame({"t": "command_result", "id": 1, "text": "Provider quota: unavailable"})
+        await mirror.handle_frame({"t": "command_result", "id": 1, "text": "GPT quota unavailable."})
         return await task
-    assert asyncio.run(exercise()) == "Provider quota: unavailable"
+    assert asyncio.run(exercise()) == "GPT quota unavailable."
     assert not mirror.queue and not mirror.pending
 
 
