@@ -27,7 +27,7 @@ Wire protocol (newline-delimited JSON, both directions):
   extension -> bot  {"t":"hello","features":["image"]}
                     {"t":"terminal","text":...,"images":[...]} terminal submission
                     {"t":"reply","text":...}        final visible Pi text
-                    {"t":"command","id":N,"command":"toggle"|"on"|"off"|"status"}
+                    {"t":"command","id":N,"command":"toggle"|"on"|"off"|"status"|"token_usage"}
                     {"t":"set","setting":"confirmations","value":bool}
                     {"t":"accepted","id":"..."}     Pi accepted that message
                     {"t":"rejected","id":"..."}     Pi could not accept it
@@ -50,6 +50,7 @@ Pi as conversation text:
 
   /telegram on | off | status        Telegram
   /telegram_on | /telegram_off | /telegram_status
+  /token_usage                     GPT quota (paired chat only)
   /telegram_confirmations_on | /telegram_confirmations_off
                                      Telegram menu aliases, published to the
                                      paired chat with setMyCommands because
@@ -170,6 +171,8 @@ MIRROR_COMMANDS = ("on", "off", "status")
 # Telegram's command menu accepts only lowercase letters, digits, and
 # underscores, so "/telegram on" cannot appear in it. These single-token
 # aliases are the menu entries; both forms do the same thing.
+TOKEN_USAGE_COMMAND = "token_usage"
+TOKEN_USAGE_UNAVAILABLE = "GPT quota unavailable."
 MIRROR_ALIASES = {
     "/telegram_on": "on",
     "/telegram_off": "off",
@@ -185,6 +188,7 @@ MENU_COMMANDS = [
      "description": "Confirm each message Pi accepts"},
     {"command": "telegram_confirmations_off",
      "description": "Stop confirming accepted messages"},
+    {"command": "token_usage", "description": "Show GPT quota"},
 ]
 # Images the captain can send from the paired chat. Anything else is refused
 # before a byte is downloaded.
@@ -518,6 +522,8 @@ class MirrorBot:
     active_transcription: bool = False
     _sequence: int = 0
     _stopping: bool = False
+    _command_sequence: int = 0
+    command_waiters: dict[int, asyncio.Future[str]] = field(default_factory=dict)
 
     # --- helpers ---
 
@@ -688,6 +694,9 @@ class MirrorBot:
                 await self.broadcast_state()
                 return
             head = text.strip().split(" ", 1)[0].split("@", 1)[0]
+            if head == "/token_usage":
+                await self.send(await self.request_pi_command(TOKEN_USAGE_COMMAND), reply_to=message_id)
+                return
             if head in ("/start", "/help", "/telegram"):
                 await self.send(HELP_REPLY, reply_to=message_id)
                 return
@@ -761,6 +770,22 @@ class MirrorBot:
         except OSError as exc:
             # The choice still applies to this run; only its persistence failed.
             log(f"could not persist the confirmations setting: {exc}")
+
+    async def request_pi_command(self, command: str) -> str:
+        if not self.connected or not self.client_ready:
+            return TOKEN_USAGE_UNAVAILABLE
+        self._command_sequence += 1
+        command_id = self._command_sequence
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        self.command_waiters[command_id] = future
+        if not await self.write_frame({"t": "command", "id": command_id, "command": command}):
+            self.command_waiters.pop(command_id, None)
+            return TOKEN_USAGE_UNAVAILABLE
+        try:
+            return await asyncio.wait_for(future, timeout=20)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            self.command_waiters.pop(command_id, None)
+            return TOKEN_USAGE_UNAVAILABLE
 
     async def broadcast_state(self) -> None:
         """Push the state Pi's footer and settings render, after every change."""
@@ -1123,6 +1148,11 @@ class MirrorBot:
 
     async def handle_frame(self, frame: dict[str, Any]) -> None:
         kind = frame.get("t")
+        if kind == "command_result" and isinstance(frame.get("id"), int):
+            waiter = self.command_waiters.pop(frame["id"], None)
+            if waiter is not None and not waiter.done():
+                waiter.set_result(frame.get("text") if isinstance(frame.get("text"), str) else TOKEN_USAGE_UNAVAILABLE)
+            return
         if kind == "hello":
             # The bridge declares what it can render; anything it does not claim
             # is never sent to it.

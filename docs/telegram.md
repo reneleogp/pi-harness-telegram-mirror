@@ -100,9 +100,12 @@ In Telegram, these switch it and are never sent to Pi as conversation text:
 - `/telegram on` - start mirroring in both directions.
 - `/telegram off` - stop new mirroring.
 - `/telegram status` - report mirroring, whether Pi is connected, and whether confirmations are on.
+- `/token_usage` - report GPT quota remaining and human-readable reset times.
+
+`/token_usage` reads Codex's local app-server rate-limit RPC only; it never reads or exposes credentials and never makes a model inference call. The response is headed `GPT quota` and contains one compact line per available window, with percent left and a relative reset such as `resets in 4d 6h`. Unavailable quota is reported concisely, and no empty rows are shown for other providers.
 
 Telegram's own command menu cannot contain a space, so `/telegram on`, `/telegram off`, and `/telegram status` are also published as `/telegram_on`, `/telegram_off`, and `/telegram_status`.
-The menu also publishes `/telegram_confirmations_on` and `/telegram_confirmations_off`.
+The menu also publishes `/telegram_confirmations_on`, `/telegram_confirmations_off`, and `/token_usage`.
 The aliases exist so every Telegram command is visible and tappable.
 
 While mirror mode is off, an ordinary message is answered with `Telegram mirror is off. Send /telegram_on to enable it.`, naming a command you can tap straight from the menu.
