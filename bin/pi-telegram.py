@@ -50,7 +50,7 @@ Pi as conversation text:
 
   /telegram on | off | status        Telegram
   /telegram_on | /telegram_off | /telegram_status
-  /token_usage                     provider quota and Pi session context (paired chat only)
+  /token_usage                     GPT quota (paired chat only)
   /telegram_confirmations_on | /telegram_confirmations_off
                                      Telegram menu aliases, published to the
                                      paired chat with setMyCommands because
@@ -172,7 +172,7 @@ MIRROR_COMMANDS = ("on", "off", "status")
 # underscores, so "/telegram on" cannot appear in it. These single-token
 # aliases are the menu entries; both forms do the same thing.
 TOKEN_USAGE_COMMAND = "token_usage"
-TOKEN_USAGE_UNAVAILABLE = "Provider quota unavailable: Pi is disconnected."
+TOKEN_USAGE_UNAVAILABLE = "GPT quota unavailable."
 MIRROR_ALIASES = {
     "/telegram_on": "on",
     "/telegram_off": "off",
@@ -188,7 +188,7 @@ MENU_COMMANDS = [
      "description": "Confirm each message Pi accepts"},
     {"command": "telegram_confirmations_off",
      "description": "Stop confirming accepted messages"},
-    {"command": "token_usage", "description": "Show provider quota and session context"},
+    {"command": "token_usage", "description": "Show GPT quota"},
 ]
 # Images the captain can send from the paired chat. Anything else is refused
 # before a byte is downloaded.

@@ -130,13 +130,16 @@ def test_token_usage_routes_to_pi_without_queueing_conversation_text():
     assert not mirror.queue and not mirror.pending
 
 
-def test_provider_quota_formatter_is_provider_neutral_and_unavailable_safe():
+def test_provider_quota_formatter_is_concise_and_human_readable():
     script = r'''import { formatProviderQuota } from "./extensions/telegram-quota.ts";
+const now = new Date("2030-01-01T00:00:00.000Z");
 const value = formatProviderQuota({ provider: "OpenAI Codex", windows: [
-  { label: "weekly", remainingPercent: 87, resetAt: "2030-01-01T00:00:00.000Z" },
-] });
-if (!value.includes("Provider quota") || !value.includes("87% remaining") || !value.includes("reset")) throw new Error(value);
-if (!formatProviderQuota(undefined).includes("unavailable")) throw new Error("missing unavailable state");
+  { label: "weekly", remainingPercent: 3, resetAt: "2030-01-05T06:00:00.000Z" },
+  { label: "5-hour", remainingPercent: 80, resetAt: "2030-01-01T00:35:00.000Z" },
+] }, now);
+if (value !== "GPT quota\nWeekly: 3% left · resets in 4d 6h\n5-hour: 80% left · resets in 35m") throw new Error(value);
+if (value.includes("Provider") || value.includes("context") || value.includes("T00:00")) throw new Error(value);
+if (formatProviderQuota(undefined) !== "GPT quota unavailable.") throw new Error("missing unavailable state");
 '''
     result = subprocess.run(["node", "--experimental-strip-types", "--input-type=module", "-"], cwd=ROOT, input=script, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

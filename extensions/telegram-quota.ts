@@ -7,7 +7,8 @@ export type QuotaWindow = {
 };
 
 export type ProviderQuota = {
-  provider: "OpenAI Codex";
+  /** Provider-neutral so additional quota sources can be added later. */
+  provider: string;
   windows: QuotaWindow[];
 };
 
@@ -83,13 +84,30 @@ export const readCodexQuota: QuotaReader = () => new Promise((resolve, reject) =
   child.stdin.write(`${JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "pi-telegram", title: "Pi Telegram", version: "1.0.0" }, capabilities: {} } })}\n`);
 });
 
-export function formatProviderQuota(quota: ProviderQuota | undefined): string {
-  if (!quota || quota.windows.length === 0) {
-    return "Provider quota: unavailable (Codex account rate limits could not be read).";
+function formatReset(resetAt: string | undefined, now: Date): string {
+  if (!resetAt) return "reset unavailable";
+  const milliseconds = Date.parse(resetAt) - now.getTime();
+  if (!Number.isFinite(milliseconds)) return "reset unavailable";
+  if (milliseconds <= 0) return "resets now";
+  const minutes = Math.floor(milliseconds / 60_000);
+  if (minutes < 1) return "resets in under 1m";
+  if (minutes < 60) return `resets in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  if (days > 0) {
+    const remainderHours = hours % 24;
+    return remainderHours > 0 ? `resets in ${days}d ${remainderHours}h` : `resets in ${days}d`;
   }
-  const lines = ["Provider quota (not Pi session context):", `Provider: ${quota.provider}`];
+  const remainderMinutes = minutes % 60;
+  return remainderMinutes > 0 ? `resets in ${hours}h ${remainderMinutes}m` : `resets in ${hours}h`;
+}
+
+export function formatProviderQuota(quota: ProviderQuota | undefined, now = new Date()): string {
+  if (!quota || quota.windows.length === 0) return "GPT quota unavailable.";
+  const lines = ["GPT quota"];
   for (const window of quota.windows) {
-    lines.push(`${window.label}: ${window.remainingPercent}% remaining; reset: ${window.resetAt ?? "unavailable"}`);
+    const label = window.label === "weekly" ? "Weekly" : window.label === "5-hour" ? "5-hour" : window.label;
+    lines.push(`${label}: ${Math.round(window.remainingPercent)}% left · ${formatReset(window.resetAt, now)}`);
   }
   return lines.join("\n");
 }
