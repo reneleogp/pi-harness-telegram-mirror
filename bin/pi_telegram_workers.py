@@ -332,10 +332,12 @@ def _herdr_status(worker: ManagedWorker) -> tuple[str, str]:
         return "unknown", "Herdr status unavailable"
     if not isinstance(payload, dict):
         return "unknown", "Herdr status unavailable"
-    agent = (payload.get("result") or {}).get("agent")
-    status = agent.get("agent_status") if isinstance(agent, dict) else None
-    if status in SUPPORTED_HERDR_STATUSES:
-        return str(status), ""
+    result_payload = payload.get("result")
+    if isinstance(result_payload, dict):
+        agent = result_payload.get("agent")
+        status = agent.get("agent_status") if isinstance(agent, dict) else None
+        if status in SUPPORTED_HERDR_STATUSES:
+            return str(status), ""
     error = payload.get("error")
     code = error.get("code") if isinstance(error, dict) else None
     if code in {"agent_not_found", "pane_not_found"}:

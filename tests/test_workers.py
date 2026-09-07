@@ -152,14 +152,18 @@ def test_absent_timeout_malformed_and_remote_endpoints_report_unknown(tmp_path, 
             '{"error":{"code":"agent_not_found"}}', 1)),
         "timeout": ("w2:p1", workers_module.CommandResult("", -1, timed_out=True)),
         "malformed": ("w3:p1", workers_module.CommandResult("not json", 0)),
+        "result-malformed": ("w4:p1", workers_module.CommandResult(
+            '{"result":"malformed"}', 0)),
+        "agent-malformed": ("w5:p1", workers_module.CommandResult(
+            '{"result":{"agent":[]}}', 0)),
     }
     for name, (pane, _result) in cases.items():
         (home / "state" / f"{name}.meta").write_text(herdr_meta(name, "fleet", pane))
     (home / "state/remote.meta").write_text(
-        herdr_meta("remote", "remote-fleet", "w4:p1", kind="secondmate", remote=True)
+        herdr_meta("remote", "remote-fleet", "w6:p1", kind="secondmate", remote=True)
     )
     (home / "state/bad.meta").write_text(
-        herdr_meta("bad", "fleet", "w5:p1") + "endpoint_task_id=someone-else\n"
+        herdr_meta("bad", "fleet", "w7:p1") + "endpoint_task_id=someone-else\n"
     )
     results = {pane: result for pane, result in cases.values()}
     runner, calls = fake_runner_for(
@@ -174,11 +178,13 @@ def test_absent_timeout_malformed_and_remote_endpoints_report_unknown(tmp_path, 
     assert views["absent"].herdr_note == "Herdr endpoint absent"
     assert views["timeout"].herdr_note == "Herdr status timed out"
     assert views["malformed"].herdr_note == "Herdr status unavailable"
+    assert views["result-malformed"].herdr_note == "Herdr status unavailable"
+    assert views["agent-malformed"].herdr_note == "Herdr status unavailable"
     assert views["remote"].herdr_note == "remote Herdr status unavailable"
     assert views["bad"].herdr_note == "endpoint metadata unavailable"
     queried = {call[3] for call in calls if call[0] == "herdr"}
     assert queried == set(results)
-    assert "w4:p1" not in queried and "w5:p1" not in queried
+    assert "w6:p1" not in queried and "w7:p1" not in queried
 
 
 def test_stale_status_history_is_not_read_and_current_state_failures_are_bounded(tmp_path, monkeypatch):
