@@ -37,12 +37,14 @@ import {
 import { connect, type Socket } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { getSettingsListTheme, type ExtensionAPI, type ExtensionContext }
   from "@earendil-works/pi-coding-agent";
 import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
 import { sendTelegramDelivery, type QueuedImage } from "./telegram-delivery.ts";
 import { formatTelegramFooter } from "./telegram-footer.ts";
 import { formatProviderQuota, readCodexQuota } from "./telegram-quota.ts";
+import { createAgentControls } from "./telegram-agent-controls.ts";
 
 type BotFrame = {
   t?: string;
@@ -53,6 +55,10 @@ type BotFrame = {
   confirmations?: unknown;
   nonce?: unknown;
   voice?: unknown;
+  command?: unknown;
+  provider?: unknown;
+  model?: unknown;
+  level?: unknown;
 };
 
 type MigrationVoice = { path: string };
@@ -368,6 +374,8 @@ export function formatTokenUsage(_ctx: ExtensionContext | null, quotaText: strin
 }
 
 export default function (pi: ExtensionAPI) {
+  const agentControls = createAgentControls(pi, getSupportedThinkingLevels);
+
   // A session that can never hold this home's lock stays completely inert: no
   // socket, no footer, no commands. A session that simply has not been recorded
   // yet is a different case, and waits below rather than deciding against
@@ -526,6 +534,18 @@ export default function (pi: ExtensionAPI) {
       write({ t: "command_result", id: frame.id, text: formatTokenUsage(activeCtx, quotaText) });
       return;
     }
+    if (frame.t === "command" && typeof frame.id === "number" &&
+        (frame.command === "agent_info" || frame.command === "change_model" ||
+         frame.command === "change_thinking")) {
+      const result = await agentControls.handle({
+        command: frame.command,
+        provider: frame.provider,
+        model: frame.model,
+        level: frame.level,
+      });
+      write({ t: "command_result", id: frame.id, ...result });
+      return;
+    }
     if (frame.t === "command_result" && typeof frame.id === "number") {
       const waiter = commandWaiters.get(frame.id);
       if (waiter) {
@@ -546,8 +566,8 @@ export default function (pi: ExtensionAPI) {
   function queueDelivery(id: string, text: string, image?: QueuedImage): void {
     deliveries = deliveries.then(async () => {
       await sendTelegramDelivery(
-        (content, options) => pi.sendUserMessage(content as never, options),
-        activeCtx?.isIdle === true,
+        async (content, options) => { pi.sendUserMessage(content as never, options); },
+        activeCtx?.isIdle() === true,
         text,
         image,
       );
@@ -600,6 +620,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on?.("session_start", (_event, ctx) => {
     activeCtx = ctx;
+    agentControls.start(ctx);
     stopped = false;
     reconnectDelay = RECONNECT_MS;
     lockWaitAttempts = 0;
@@ -608,8 +629,14 @@ export default function (pi: ExtensionAPI) {
     else retryOwnership(ctx);
   });
 
+  pi.on?.("model_select", (event, ctx) => {
+    activeCtx = ctx;
+    agentControls.modelSelected(event.model, ctx);
+  });
+
   pi.on?.("session_shutdown", () => {
     stopped = true;
+    agentControls.stop();
     if (reconnectTimer) clearTimeout(reconnectTimer);
     if (lockWaitTimer) clearTimeout(lockWaitTimer);
     reconnectTimer = null;

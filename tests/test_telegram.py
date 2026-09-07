@@ -132,6 +132,220 @@ def test_token_usage_routes_to_pi_without_queueing_conversation_text():
     assert not mirror.queue and not mirror.pending
 
 
+def test_agent_control_commands_use_direct_framing_and_never_enter_message_queue(tmp_path):
+    bot = load_bot()
+    calls = []
+    requests = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    mirror = bot.MirrorBot(bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi())
+
+    async def fake_request(command, **values):
+        requests.append((command, values))
+        if command == "agent_info":
+            return {"text": "Agent Info\nModel: one"}
+        if command == "change_model":
+            return {
+                "text": "Change Model\nCurrent: alpha/one",
+                "menu": "model",
+                "choices": [
+                    {"label": f"alpha/model-{index}", "provider": "alpha", "model": f"model-{index}"}
+                    for index in range(10)
+                ],
+            }
+        if command == "change_thinking":
+            return {
+                "text": "Change Thinking Level\nCurrent: low",
+                "menu": "thinking",
+                "target": {"provider": "alpha", "model": "one"},
+                "choices": [{"label": "off", "level": "off"}, {"label": "low", "level": "low"}],
+            }
+        raise AssertionError(command)
+
+    mirror.request_pi_result = fake_request
+
+    async def exercise():
+        messages = (
+            "/agent_info", "/change_model", "/change_thinking",
+            "/agent_info invalid", "/change_model invalid", "/change_thinking invalid",
+        )
+        for message_id, text in enumerate(messages, 1):
+            await mirror.handle_update({"message": {
+                "message_id": message_id,
+                "from": {"id": 7},
+                "chat": {"id": 8, "type": "private"},
+                "text": text,
+            }})
+
+    asyncio.run(exercise())
+
+    assert requests == [("agent_info", {}), ("change_model", {}), ("change_thinking", {})]
+    labels = {item["command"]: item["description"] for item in bot.MENU_COMMANDS}
+    assert labels["change_model"] == "Change Model"
+    assert labels["change_thinking"] == "Change Thinking Level"
+    assert labels["agent_info"] == "Agent Info"
+    assert not mirror.queue and not mirror.pending
+    menus = [call[1]["reply_markup"] for call in calls
+             if call[0] == "sendMessage" and call[1].get("reply_markup")]
+    assert len(menus[0]["inline_keyboard"]) == bot.CONTROL_PAGE_SIZE + 1
+    assert menus[0]["inline_keyboard"][-1][-1]["text"] == "Next"
+    assert calls[-1][1]["text"] == "Usage: /change_thinking"
+
+
+def test_agent_control_callback_selects_from_bound_menu_and_refuses_stale_session(tmp_path):
+    bot = load_bot()
+    calls = []
+    requests = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": 50}
+
+    mirror = bot.MirrorBot(bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi())
+    mirror.client = object()
+    mirror.client_ready = True
+    mirror._client_generation = 4
+
+    async def fake_request(command, **values):
+        requests.append((command, values))
+        if values:
+            return {"text": "Model changed\nModel: alpha/two\nThinking: low"}
+        return {
+            "text": "Change Model\nCurrent: alpha/one",
+            "menu": "model",
+            "choices": [
+                {"label": "alpha/one", "provider": "alpha", "model": "one"},
+                {"label": "alpha/two", "provider": "alpha", "model": "two"},
+            ],
+        }
+
+    mirror.request_pi_result = fake_request
+
+    async def exercise():
+        await mirror.present_agent_control("change_model", 10)
+        token, menu = next(iter(mirror.control_menus.items()))
+        await mirror.handle_update({"callback_query": {
+            "id": "callback-1",
+            "from": {"id": 7},
+            "message": {"message_id": menu.message_id, "chat": {"id": 8, "type": "private"}},
+            "data": f"c:{token}:s:1",
+        }})
+        await mirror.present_agent_control("change_model", 11)
+        stale_token, stale_menu = next(iter(mirror.control_menus.items()))
+        mirror._client_generation += 1
+        await mirror.handle_update({"callback_query": {
+            "id": "callback-2",
+            "from": {"id": 7},
+            "message": {"message_id": stale_menu.message_id, "chat": {"id": 8, "type": "private"}},
+            "data": f"c:{stale_token}:s:0",
+        }})
+
+    asyncio.run(exercise())
+
+    assert requests[:2] == [
+        ("change_model", {}),
+        ("change_model", {"provider": "alpha", "model": "two"}),
+    ]
+    assert len(requests) == 3
+    edits = [params for method, params in calls if method == "editMessageText"]
+    assert edits[0]["text"].startswith("Model changed")
+    answers = [params for method, params in calls if method == "answerCallbackQuery"]
+    assert answers[-1]["text"] == bot.STALE_CONTROL_REPLY
+    assert not mirror.queue and not mirror.pending
+
+
+def test_agent_control_callbacks_require_the_paired_private_chat(tmp_path):
+    bot = load_bot()
+    calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": 1}
+
+    mirror = bot.MirrorBot(bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi())
+    menu = bot.ControlMenu("thinking", 1, "choose", [{"label": "off", "level": "off"}],
+                           __import__("time").monotonic(), {"provider": "alpha", "model": "one"}, 20)
+    mirror.control_menus["safe"] = menu
+    mirror.client = object()
+    mirror.client_ready = True
+    mirror._client_generation = 1
+    control_requests = []
+
+    async def fake_request(command, **values):
+        control_requests.append((command, values))
+        return {"text": "unexpected"}
+
+    mirror.request_pi_result = fake_request
+
+    async def exercise():
+        await mirror.handle_update({"callback_query": {
+            "id": "callback",
+            "from": {"id": 7},
+            "message": {"message_id": 20, "chat": {"id": 8, "type": "group"}},
+            "data": "c:safe:s:0",
+        }})
+
+    asyncio.run(exercise())
+    assert calls == []
+    assert control_requests == []
+
+
+def test_agent_control_request_reply_framing_is_bound_to_connected_generation():
+    bot = load_bot()
+    mirror = bot.MirrorBot(bot.Config(Path("/tmp"), "token", 1, 1, "transcribe", "fake"),
+                           bot.TelegramApi("fake", "token"))
+    writes = []
+    mirror.client = object()
+    mirror.client_ready = True
+    mirror._client_generation = 3
+
+    async def fake_write(frame):
+        writes.append(frame)
+        return True
+
+    mirror.write_frame = fake_write
+
+    async def exercise():
+        pending = asyncio.create_task(mirror.request_pi_result(
+            "change_model", provider="alpha", model="two",
+        ))
+        await asyncio.sleep(0)
+        assert writes == [{
+            "t": "command", "id": 1, "command": "change_model",
+            "provider": "alpha", "model": "two",
+        }]
+        await mirror.handle_frame({
+            "t": "command_result", "id": 1,
+            "text": "Model changed\nModel: alpha/two\nThinking: low",
+        })
+        return await pending
+
+    result = asyncio.run(exercise())
+    assert result["text"].startswith("Model changed")
+    assert not mirror.command_waiters
+
+
+def test_disconnected_agent_controls_and_token_usage_are_explicit():
+    bot = load_bot()
+    mirror = bot.MirrorBot(bot.Config(Path("/tmp"), "token", 1, 1, "transcribe", "fake"),
+                           bot.TelegramApi("fake", "token"))
+
+    async def exercise():
+        control = await mirror.request_pi_result("agent_info")
+        quota = await mirror.request_pi_command(bot.TOKEN_USAGE_COMMAND)
+        return control, quota
+
+    control, quota = asyncio.run(exercise())
+    assert control == {"text": bot.AGENT_CONTROL_UNAVAILABLE}
+    assert quota == bot.TOKEN_USAGE_UNAVAILABLE
+
+
 def test_provider_quota_formatter_is_concise_and_human_readable():
     script = r'''import { formatProviderQuota } from "./extensions/telegram-quota.ts";
 const now = new Date("2030-01-01T00:00:00.000Z");

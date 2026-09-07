@@ -101,11 +101,24 @@ In Telegram, these switch it and are never sent to Pi as conversation text:
 - `/telegram off` - stop new mirroring.
 - `/telegram status` - report mirror mode, whether Pi is connected, confirmations, and waiting messages, with one line per item.
 - `/token_usage` - report GPT quota remaining and human-readable reset times.
+- `/agent_info` - show the connected owning Pi session's model, provider, effective thinking level, and context usage versus capacity.
+- `/change_model` - choose an available model for that live session.
+- `/change_thinking` - choose one of the current model's supported thinking levels.
 
-`/token_usage` reads Codex's local app-server rate-limit RPC only; it never reads or exposes credentials and never makes a model inference call. The response is headed `GPT quota` and contains one compact line per available window, with percent left and a relative reset such as `resets in 4d 6h`. Unavailable quota is reported concisely, and no empty rows are shown for other providers.
+The three agent controls are handled directly by the bot and extension and never become conversation input.
+They apply only to the Pi session that owns the mirror, never worker or other Pi sessions, and never change Pi's saved startup defaults.
+Model and thinking changes are allowed only while the owning session is idle, and the result reports Pi's actual model and effective thinking value after the change.
+Model choices come from Pi's authenticated available catalog, honoring a session model scope when one exists.
+Thinking choices use Pi's model-specific supported levels.
+Inline choices are paginated, bound to the paired private chat and current socket generation, and rejected after session replacement.
+Unknown context usage and unavailable model state are labeled explicitly rather than shown as zero.
+
+`/token_usage` reads Codex's local app-server rate-limit RPC only; it never reads or exposes credentials and never makes a model inference call.
+The response is headed `GPT quota` and contains one compact line per available window, with percent left and a relative reset such as `resets in 4d 6h`.
+Unavailable quota is reported concisely, and no empty rows are shown for other providers.
 
 Telegram's own command menu cannot contain a space, so `/telegram on`, `/telegram off`, and `/telegram status` are also published as `/telegram_on`, `/telegram_off`, and `/telegram_status`.
-The menu also publishes `/telegram_confirmations_on`, `/telegram_confirmations_off`, and `/token_usage`.
+The menu also publishes `/telegram_confirmations_on`, `/telegram_confirmations_off`, `/token_usage`, `/change_model` as `Change Model`, `/change_thinking` as `Change Thinking Level`, and `/agent_info` as `Agent Info`.
 The aliases exist so every Telegram command is visible and tappable.
 
 While mirror mode is off, an ordinary message is answered with `Telegram mirror is off. Send /telegram_on to enable it.`, naming a command you can tap straight from the menu.

@@ -9,6 +9,6 @@
   "author": "Rene Gonzalez",
   "engines": {"node": ">=18"},
   "files": ["extensions", "bin", "docs", "README.md", "LICENSE", "package.json"],
-  "peerDependencies": {"@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*"},
+  "peerDependencies": {"@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*"},
   "pi": {"extensions": ["./extensions/telegram-mirror.ts"]}
 }
