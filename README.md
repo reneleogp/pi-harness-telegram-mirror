@@ -84,7 +84,7 @@ After installing and connecting Pi, run:
 python3 /installed/package/bin/pi-telegram.py migrate
 ```
 
-It validates and copies token, pairing, and settings from the legacy `~/.firstmate-telegram` configuration into `~/.pi-telegram` without printing secrets or deleting or mutating the old directory. Retry is idempotent. After installation, the operator must perform one real text, image, and voice smoke test through Pi before retiring the legacy setup. The legacy path exists only in this explicit migration operation, not normal runtime.
+It validates and copies token, pairing, and settings from the legacy `~/.firstmate-telegram` configuration into `~/.pi-telegram` without printing secrets or deleting or mutating the old directory. Retry is idempotent. Development and migration validation use isolated private state and fake transport. After installation, an operator may separately approve a real text, image, and voice verification through Pi before retiring the legacy setup; this is not part of automated testing and must not use test credentials or alter the installed service. The legacy path exists only in this explicit migration operation, not normal runtime.
 
 ## Troubleshooting, privacy, limitations
 
@@ -92,6 +92,6 @@ Run `status`, inspect `service-unit`, confirm `env`/`config.json` permissions, r
 
 ## Verification
 
-Fake transport tests use no real token: `tests/run.sh`.
-Opt-in E2E: `PI_TELEGRAM_LIVE_E2E=1 tests/pi-telegram-live-e2e.test.sh`.
+Fake transport tests use isolated state and no real token: `tests/run.sh`.
+The opt-in live E2E command is reserved for a separately approved post-install check: `PI_TELEGRAM_LIVE_E2E=1 tests/pi-telegram-live-e2e.test.sh`.
 The current parity checklist and validation evidence are in `docs/port-parity.md`.

@@ -18,10 +18,11 @@ This checklist records the standalone behavior covered by the package and the va
 
 ## Validation evidence
 
-- `tests/run.sh` passed: 26 tests.
-- `python3 -m pytest -q` passed: 13 tests.
-- `python3 -m pytest -q tests/test_package.py` passed: 5 tests.
-- `python3 -m pytest -q tests/test_telegram.py` passed: 26 tests.
+- `tests/run.sh` passed: 68 test executions (27 combined, 8 Telegram, 6 package, and 27 combined through the non-live E2E wrapper).
+- `python3 -m pytest -q` passed: 27 tests.
+- `python3 -m pytest -q tests/test_behavior_matrix.py` passed: 13 tests.
+- `python3 -m pytest -q tests/test_package.py` passed: 6 tests.
+- `python3 -m pytest -q tests/test_telegram.py` passed: 8 tests.
 - Pi extension delivery-mode smoke passed with Node's type stripping loader.
 - Fake HTTP transport and real Unix-socket protocol smoke passed with isolated temporary state.
 - Service-unit tests validated Linux systemd semantics on this host.
