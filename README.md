@@ -59,9 +59,7 @@ Linux systemd user services and macOS LaunchAgents are supported. Linux uses `~/
 
 The extension registers `/telegram` and `/telegram-settings`; the latter controls footer visibility and delivery confirmations.
 Telegram commands are `/telegram_on`, `/telegram_off`, `/telegram_status`, `/token_usage`, `/agent_info`, `/change_model`, and `/change_thinking` (plus spaced forms where applicable).
-`/agent_info` reports the connected owning Pi session's model, provider, effective thinking level, and current context usage versus capacity.
-`/change_model` and `/change_thinking` use paginated inline choices sourced from Pi and confirm the actual resulting session values without changing startup defaults.
-These direct controls are unavailable while Pi is busy, reject stale buttons after session replacement, and never enter the agent prompt path or affect workers and other sessions.
+See [docs/telegram.md](docs/telegram.md) for agent-control behavior, ownership, and confirmation details.
 `/token_usage` reports concise GPT quota windows in the paired private chat.
 Text is in-memory FIFO with bounded frames and one session.
 Accepted messages optionally receive `Pi · Sent to Pi.`.
