@@ -1,6 +1,6 @@
 # Project guidance
 
-- This is a standalone Pi package: normal runtime code must not import, invoke, or depend on Firstmate.
+- This is a standalone Pi package: normal startup and mirror behavior must not import, invoke, or depend on Firstmate. The authorized `/workers` command may use its bounded, read-only integration only for the exact connected Firstmate home.
 - Keep Telegram state under the owner-private `PI_TELEGRAM_DIR`; use fake transport and isolated temporary state for tests.
 - Run `tests/run.sh` for the Python and extension regression suites.
 - Validate package loading with Pi before committing, and keep release instructions accurate about available tags.

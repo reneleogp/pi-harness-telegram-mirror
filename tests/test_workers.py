@@ -218,6 +218,44 @@ def test_output_spans_messages_without_dropping_workers(tmp_path, monkeypatch):
         assert combined.count(f"{name} -") == 1
 
 
+def test_package_load_and_status_work_without_firstmate_import(tmp_path, monkeypatch):
+    class BlockFirstmateImport:
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname == "pi_telegram_workers":
+                raise AssertionError("Firstmate integration imported during startup")
+            return None
+
+    monkeypatch.setattr(sys, "meta_path", [BlockFirstmateImport(), *sys.meta_path])
+    bot = load_path("pi_telegram_workers_standalone_bot", BOT)
+    calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    class FakeClient:
+        def write(self, frame):
+            pass
+
+        async def drain(self):
+            pass
+
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = FakeClient()
+    mirror.client_ready = True
+    mirror.session_root = None
+    asyncio.run(mirror.handle_update({"message": {
+        "message_id": 1,
+        "from": {"id": 7},
+        "chat": {"id": 8, "type": "private"},
+        "text": "/telegram_status",
+    }}))
+    assert calls[-1][1]["text"].startswith("Mirror:")
+
+
 def test_pairing_denial_and_standalone_mode_never_query_workers(tmp_path, monkeypatch):
     bot = load_path("pi_telegram_workers_bot", BOT)
     calls = []

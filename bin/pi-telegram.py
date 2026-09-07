@@ -126,7 +126,25 @@ from typing import Any, Optional, Union
 _SCRIPT_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
-from pi_telegram_workers import WorkersUnavailable, worker_messages
+
+
+class WorkersUnavailable(RuntimeError):
+    pass
+
+
+def worker_messages(home: Path) -> list[str]:
+    try:
+        from pi_telegram_workers import (
+            WorkersUnavailable as IntegrationUnavailable,
+            worker_messages as collect_worker_messages,
+        )
+    except ImportError as exc:
+        raise WorkersUnavailable("worker integration is unavailable") from exc
+    try:
+        return collect_worker_messages(home)
+    except IntegrationUnavailable as exc:
+        raise WorkersUnavailable(str(exc)) from exc
+
 
 try:  # Debian/Ubuntu: python3-mistune
     import mistune
