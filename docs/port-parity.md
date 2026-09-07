@@ -34,6 +34,6 @@ This checklist records the standalone behavior covered by the package and the va
 
 `git ls-remote --tags origin` returned no tags during this task, so `v1` is not an available install target.
 
-After merge, firstmate needs explicit approval to create and push the immutable `v1` tag at the validated merge commit.
+After the validated changes land on the default branch, the repository maintainer publishes the absent immutable `v1` tag at that validated commit.
 
 Only after that publication action should operators use the `pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1` command documented in the README.
