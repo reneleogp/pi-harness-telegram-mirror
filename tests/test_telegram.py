@@ -5,6 +5,8 @@ import json
 import os
 import subprocess
 import sys
+
+import pytest
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
@@ -145,12 +147,57 @@ if (formatProviderQuota(undefined) !== "GPT quota unavailable.") throw new Error
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("mirror_on", [True, False])
+@pytest.mark.parametrize("confirmations", [True, False])
+@pytest.mark.parametrize("command", ["/telegram_status", "/telegram status"])
+def test_status_commands_dispatch_one_line_per_item_with_boolean_emojis(
+    tmp_path, mirror_on, confirmations, command,
+):
+    bot = load_bot()
+    calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    config = bot.Config(tmp_path, "fake-token", 7, 8, "transcribe", "fake")
+    config.confirmations = confirmations
+    mirror = bot.MirrorBot(config, FakeApi(), mirror_on=mirror_on)
+    mirror.queue.append(bot.Queued("m1", "waiting", 42))
+
+    async def exercise():
+        await mirror.handle_update({
+            "message": {
+                "message_id": 10,
+                "from": {"id": 7},
+                "chat": {"id": 8, "type": "private"},
+                "text": command,
+            },
+        })
+
+    asyncio.run(exercise())
+
+    assert len(calls) == 1
+    assert calls[0][0] == "sendMessage"
+    assert calls[0][1]["text"].splitlines() == [
+        f"Mirror: {'✅' if mirror_on else '❌'}",
+        "Pi: not running",
+        f"Confirmations: {'✅' if confirmations else '❌'}",
+        "Messages waiting: 1",
+    ]
+    assert "Mirror: on" not in calls[0][1]["text"]
+    assert "Mirror: off" not in calls[0][1]["text"]
+    assert "Confirmations: on" not in calls[0][1]["text"]
+    assert "Confirmations: off" not in calls[0][1]["text"]
+
+
 def test_commands_and_image_validation_are_observable():
     bot = load_bot()
     config = bot.Config(Path("/tmp"), "token", 1, 1, "transcribe", "http://fake")
     mirror = bot.MirrorBot(config, bot.TelegramApi("http://fake", "token"))
-    assert "Mirror is off" in mirror.apply_command("off")
-    assert "Mirror is on" in mirror.apply_command("on")
+    assert "Mirror: ❌" in mirror.apply_command("off")
+    assert "Mirror: ✅" in mirror.apply_command("on")
     assert bot.sniff_image_mime(bytes([137]) + b"PNG\r\n\x1a\n") == "image/png"
     assert bot.sniff_image_mime(b"not-an-image") is None
 

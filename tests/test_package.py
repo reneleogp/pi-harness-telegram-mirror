@@ -50,6 +50,23 @@ def test_permissions_and_no_secret_in_unit():
 def test_help(): assert subprocess.run([sys.executable,str(ROOT/'bin/pi-telegram.py'),'--help'],capture_output=True).returncode==0
 
 
+def test_telegram_footer_uses_theme_check_and_honest_states():
+    script = r'''
+import { formatTelegramFooter } from "./extensions/telegram-footer.ts";
+const calls = [];
+const theme = { fg: (color, text) => { calls.push([color, text]); return `<${color}>${text}</${color}>`; } };
+if (formatTelegramFooter(theme, true, true) !== "telegram: <success>✓</success>") throw new Error("enabled footer");
+if (formatTelegramFooter(theme, true, false) !== "telegram: ✗") throw new Error("disabled footer");
+if (formatTelegramFooter(theme, false, true) !== "telegram: unavailable") throw new Error("disconnected footer");
+if (calls.length !== 1 || calls[0][0] !== "success" || calls[0][1] !== "✓") throw new Error("theme was not used");
+'''
+    result = subprocess.run(
+        ['node', '--experimental-strip-types', '--input-type=module', '-'],
+        cwd=ROOT, input=script, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_extension_delivery_mode_starts_idle_turns_and_steers_when_busy():
     script = r'''
 import { sendTelegramDelivery } from "./extensions/telegram-delivery.ts";

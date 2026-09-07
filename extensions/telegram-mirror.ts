@@ -41,6 +41,7 @@ import { getSettingsListTheme, type ExtensionAPI, type ExtensionContext }
   from "@earendil-works/pi-coding-agent";
 import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
 import { sendTelegramDelivery, type QueuedImage } from "./telegram-delivery.ts";
+import { formatTelegramFooter } from "./telegram-footer.ts";
 import { formatProviderQuota, readCodexQuota } from "./telegram-quota.ts";
 
 type BotFrame = {
@@ -79,11 +80,8 @@ const LOCK_WAIT_ATTEMPTS = positiveInteger("PI_TELEGRAM_LOCK_WAIT_ATTEMPTS", 30)
 const FOOTER_KEY = "pi-telegram";
 // Pi renders every extension status on one shared footer line: it sorts the
 // statuses by key, joins them with a single space, strips control characters,
-// and truncates the result to the terminal width. An extension therefore owns
-// only its own text, so the mirror ends its status with the same separator Pi's
-// other statuses use between their own fields, and the status that follows it
-// on that shared line reads as a separate item.
-const STATUS_SEPARATOR = "\u2022";
+// and truncates the result to the terminal width. The mirror owns only its own
+// text and uses Pi's theme for its enabled marker.
 // Pi's terminal does not preview an attached image, so every image message
 // carries this marker as its visible text. It names no origin: an image sent
 // from anywhere reads the same to Pi.
@@ -398,8 +396,7 @@ export default function (pi: ExtensionAPI) {
   let lockWaitAttempts = 0;
 
   function footerText(): string {
-    const state = connected ? (mirrorOn ? "on" : "off") : "unavailable";
-    return `telegram: ${state} ${STATUS_SEPARATOR}`;
+    return formatTelegramFooter(activeCtx?.ui?.theme, connected, mirrorOn);
   }
 
   function refreshFooter(): void {
