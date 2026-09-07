@@ -104,6 +104,7 @@ In Telegram, these switch it and are never sent to Pi as conversation text:
 - `/agent_info` - show the connected owning Pi session's model, provider, effective thinking level, and context usage versus capacity.
 - `/change_model` - choose an available model for that live session.
 - `/change_thinking` - choose one of the current model's supported thinking levels.
+- `/workers` - list the current connected Firstmate home's managed direct reports.
 
 The three agent controls are handled directly by the bot and extension and never become conversation input.
 They apply only to the Pi session that owns the mirror, never worker or other Pi sessions, and never change Pi's saved startup defaults.
@@ -117,8 +118,16 @@ Unknown context usage and unavailable model state are labeled explicitly rather 
 The response is headed `GPT quota` and contains one compact line per available window, with percent left and a relative reset such as `resets in 4d 6h`.
 Unavailable quota is reported concisely, and no empty rows are shown for other providers.
 
+`/workers` is an optional on-demand read-only integration.
+It uses only the exact Firstmate home authorized for the currently connected Pi session, and lists that home's direct task metadata records rather than scanning Herdr or child homes.
+Each entry shows the recorded task title, the actual lifecycle value read from the task's exact recorded Herdr session and pane, and separately labeled current progress from Firstmate's reconciled `fm-crew-state.sh` helper.
+This distinction matters because an idle Herdr agent can still have unfinished work, while task progress can be blocked, awaiting approval, validating, or done.
+A non-Herdr worker says Herdr is not applicable, and missing tools, malformed records, absent endpoints, timeouts, and disconnected or non-Firstmate sessions produce concise unavailable or unknown results without changing other bot behavior.
+Persistent secondmates appear only as this home's direct-report identity; `/workers` never reconstructs their child fleet.
+Long fleets are split across bounded Telegram messages without dropping entries.
+
 Telegram's own command menu cannot contain a space, so `/telegram on`, `/telegram off`, and `/telegram status` are also published as `/telegram_on`, `/telegram_off`, and `/telegram_status`.
-The menu also publishes `/telegram_confirmations_on`, `/telegram_confirmations_off`, `/token_usage`, `/change_model` as `Change Model`, `/change_thinking` as `Change Thinking Level`, and `/agent_info` as `Agent Info`.
+The menu also publishes `/telegram_confirmations_on`, `/telegram_confirmations_off`, `/token_usage`, `/change_model` as `Change Model`, `/change_thinking` as `Change Thinking Level`, `/agent_info` as `Agent Info`, and `/workers`.
 The aliases exist so every Telegram command is visible and tappable.
 
 While mirror mode is off, an ordinary message is answered with `Telegram mirror is off. Send /telegram_on to enable it.`, naming a command you can tap straight from the menu.

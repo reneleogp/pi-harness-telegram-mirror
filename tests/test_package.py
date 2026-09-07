@@ -9,8 +9,8 @@ def test_manifest():
 
 def test_claude_points_to_project_guidance():
  assert (ROOT/'AGENTS.md').is_file()
- assert (ROOT/'CLAUDE.md').is_symlink()
- assert os.readlink(ROOT/'CLAUDE.md') == 'AGENTS.md'
+ assert (ROOT/'CLAUDE.md').is_file()
+ assert (ROOT/'CLAUDE.md').read_text().splitlines()[-1] == '@AGENTS.md'
 def test_exact_root_and_contention():
  with tempfile.TemporaryDirectory() as t:
   h=Path(t)/'h'; root=Path(t)/'root'; root.mkdir(); sub=root/'sub'; sub.mkdir(); e={**os.environ,'PI_TELEGRAM_DIR':str(h)}

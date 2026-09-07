@@ -176,17 +176,24 @@ def check(cwd):
     except OSError: return 1
 def check_peer(pid,uid):
     r=read_record(); return 0 if r and alive(r) and int(r["pid"])==pid and int(r["uid"])==uid else 1
+def session_root(pid,uid):
+    r=read_record()
+    if not r or not alive(r) or int(r["pid"])!=pid or int(r["uid"])!=uid: return 1
+    try: root=Path(r["root"]).resolve(strict=True)
+    except (OSError, TypeError): return 1
+    print(str(root)); return 0
 def main():
     p=argparse.ArgumentParser(); sub=p.add_subparsers(dest="cmd",required=True)
     for n in ("claim","check"):
         q=sub.add_parser(n); q.add_argument("cwd")
         if n == "claim": q.add_argument("pid", nargs="?", type=int)
     q=sub.add_parser("allow-root"); q.add_argument("root")
-    q=sub.add_parser("check-peer"); q.add_argument("pid",type=int); q.add_argument("uid",type=int)
+    for n in ("check-peer", "session-root"):
+        q=sub.add_parser(n); q.add_argument("pid",type=int); q.add_argument("uid",type=int)
     a=p.parse_args(); secure()
     if a.cmd=="allow-root":
         root=str(Path(a.root).expanduser().resolve(strict=True)); d=config(); rs=roots();
         if root not in rs: rs.append(root)
         d["allowed_roots"] = rs; write_config(d); return 0
-    return claim(a.cwd, a.pid) if a.cmd == "claim" else check(a.cwd) if a.cmd == "check" else check_peer(a.pid,a.uid)
+    return claim(a.cwd, a.pid) if a.cmd == "claim" else check(a.cwd) if a.cmd == "check" else session_root(a.pid,a.uid) if a.cmd == "session-root" else check_peer(a.pid,a.uid)
 if __name__=="__main__": sys.exit(main())

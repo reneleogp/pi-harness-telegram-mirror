@@ -1,6 +1,8 @@
 # Pi Telegram Mirror
 
-Standalone bidirectional Telegram mirror for one Pi terminal session. Review extensions before installing: Pi packages run with full local permissions. This package has no Firstmate runtime dependency, database, web service, cloud queue, account system, telemetry, or generalized daemon.
+Standalone bidirectional Telegram mirror for one Pi terminal session.
+Review extensions before installing: Pi packages run with full local permissions.
+This package has no required Firstmate runtime dependency, database, web service, cloud queue, account system, telemetry, or generalized daemon.
 
 ## Install
 
@@ -58,9 +60,11 @@ Linux systemd user services and macOS LaunchAgents are supported. Linux uses `~/
 ## Behavior and Pi commands
 
 The extension registers `/telegram` and `/telegram-settings`; the latter controls footer visibility and delivery confirmations.
-Telegram commands are `/telegram_on`, `/telegram_off`, `/telegram_status`, `/token_usage`, `/agent_info`, `/change_model`, and `/change_thinking` (plus spaced forms where applicable).
-See [docs/telegram.md](docs/telegram.md) for agent-control behavior, ownership, and confirmation details.
+Telegram commands are `/telegram_on`, `/telegram_off`, `/telegram_status`, `/token_usage`, `/agent_info`, `/change_model`, `/change_thinking`, and `/workers` (plus spaced forms where applicable).
+See [docs/telegram.md](docs/telegram.md) for agent-control behavior, ownership, confirmation, and worker status details.
 `/token_usage` reports concise GPT quota windows in the paired private chat.
+`/workers` optionally lists only the current connected Firstmate home's managed direct reports, with their recorded task descriptions, actual Herdr lifecycle status, and separately labeled current task progress.
+It reports unavailable or not applicable rather than affecting normal mirror behavior when the session is not a Firstmate home, Herdr cannot be read, or a worker uses another runtime.
 Text is in-memory FIFO with bounded frames and one session.
 Accepted messages optionally receive `Pi · Sent to Pi.`.
 Final visible replies are sent once, unthreaded.

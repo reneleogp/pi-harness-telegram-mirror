@@ -56,6 +56,7 @@ Pi as conversation text:
   /agent_info                      current model, thinking, and context
   /change_model                    choose the owning Pi session's model
   /change_thinking                 choose its thinking level
+  /workers                         Firstmate-managed worker status
   /telegram_confirmations_on | /telegram_confirmations_off
                                      Telegram menu aliases, published to the
                                      paired chat with setMyCommands because
@@ -120,6 +121,13 @@ from html import escape
 from pathlib import Path
 from typing import Any, Optional, Union
 
+# Direct execution already places bin/ on sys.path. Tests and embedded loaders
+# import this file by path, so add only its own package directory in that case.
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+from pi_telegram_workers import WorkersUnavailable, worker_messages
+
 try:  # Debian/Ubuntu: python3-mistune
     import mistune
 except ImportError:  # pragma: no cover - exercised by its own regression
@@ -172,7 +180,8 @@ HELP_REPLY = (
     "/telegram_status or /telegram status - show mirror and Pi state\n"
     "/agent_info - show model, thinking, and context\n"
     "/change_model - change the connected session model\n"
-    "/change_thinking - change its thinking level"
+    "/change_thinking - change its thinking level\n"
+    "/workers - show Firstmate-managed worker status"
 )
 
 MIRROR_COMMANDS = ("on", "off", "status")
@@ -217,6 +226,7 @@ MENU_COMMANDS = [
     {"command": "change_model", "description": "Change Model"},
     {"command": "change_thinking", "description": "Change Thinking Level"},
     {"command": "agent_info", "description": "Agent Info"},
+    {"command": "workers", "description": "Show Firstmate-managed workers"},
 ]
 # Images the captain can send from the paired chat. Anything else is refused
 # before a byte is downloaded.
@@ -565,6 +575,8 @@ class MirrorBot:
     _client_generation: int = 0
     command_waiters: dict[int, tuple[int, asyncio.Future[dict[str, Any]]]] = field(default_factory=dict)
     control_menus: "OrderedDict[str, ControlMenu]" = field(default_factory=OrderedDict)
+    # The exact root authorized for the currently connected Pi peer.
+    session_root: Optional[Path] = None
 
     # --- helpers ---
 
@@ -749,6 +761,9 @@ class MirrorBot:
                 else:
                     await self.present_agent_control(control, int(message_id))
                 return
+            if head == "/workers":
+                await self.send_workers(reply_to=message_id)
+                return
             if head in ("/start", "/help", "/telegram"):
                 await self.send(HELP_REPLY, reply_to=message_id)
                 return
@@ -826,6 +841,24 @@ class MirrorBot:
         except OSError as exc:
             # The choice still applies to this run; only its persistence failed.
             log(f"could not persist the confirmations setting: {exc}")
+
+    async def send_workers(self, reply_to: int) -> None:
+        if not self.connected or self.session_root is None:
+            await self.send("Workers unavailable: no connected Firstmate home.",
+                            reply_to=reply_to)
+            return
+        try:
+            messages = await asyncio.to_thread(worker_messages, self.session_root)
+        except WorkersUnavailable as exc:
+            await self.send(f"Workers unavailable: {exc}.", reply_to=reply_to)
+            return
+        except Exception as exc:
+            log(f"could not read Firstmate workers: {type(exc).__name__}")
+            await self.send("Workers unavailable: status could not be read.",
+                            reply_to=reply_to)
+            return
+        for message in messages:
+            await self.send(message, reply_to=reply_to)
 
     async def request_pi_result(self, command: str, **values: str) -> dict[str, Any]:
         if not self.connected or not self.client_ready:
@@ -1304,6 +1337,7 @@ class MirrorBot:
         self.client = None
         self.client_features = set()
         self.client_ready = False
+        self.session_root = None
         for command_id, (waiting_generation, waiter) in list(self.command_waiters.items()):
             if waiting_generation == generation:
                 self.command_waiters.pop(command_id, None)
@@ -1342,6 +1376,7 @@ class MirrorBot:
         self._client_generation += 1
         self.client_features = set()
         self.client_ready = False
+        self.session_root = peer_session_root(writer)
         log(f"mirroring for {peer_description(writer)}")
         await self.broadcast_state()
         # The queue drains once hello names what this session can render.
@@ -1950,6 +1985,30 @@ def peer_owns_session_lock(writer: asyncio.StreamWriter) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
+
+
+def peer_session_root(writer: asyncio.StreamWriter) -> Optional[Path]:
+    """Return only the root bound to this already-authorized kernel peer."""
+    credentials = peer_credentials(writer)
+    if credentials is None:
+        return None
+    peer_pid, peer_uid = credentials
+    try:
+        result = subprocess.run(
+            [sys.executable, str(owner_helper()), "session-root",
+             str(peer_pid), str(peer_uid)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, check=False, timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0 or len(result.stdout) > 4096:
+        return None
+    try:
+        root = Path(result.stdout.decode("utf-8").strip()).resolve(strict=True)
+    except (OSError, UnicodeError):
+        return None
+    return root
 
 
 def peer_description(writer: asyncio.StreamWriter) -> str:
