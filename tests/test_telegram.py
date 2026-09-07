@@ -216,6 +216,42 @@ def test_transcription_diagnostics_are_bounded(tmp_path):
         raise AssertionError("noisy transcription unexpectedly succeeded")
 
 
+def test_parakeet_adapter_matches_v05_positional_cli(tmp_path):
+    adapter = ROOT / "bin" / "pi-parakeet-mlx-transcribe.py"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_cli = fake_bin / "parakeet-mlx"
+    fake_cli.write_text(f'''#!{sys.executable}
+import pathlib
+import sys
+
+args = sys.argv[1:]
+if not args or args[0] == "transcribe":
+    print("Invalid value for 'audios': File 'transcribe' does not exist.", file=sys.stderr)
+    raise SystemExit(2)
+audio = pathlib.Path(args[0])
+if not audio.is_file():
+    raise SystemExit("audio was not first positional argument")
+output_dir = pathlib.Path(args[args.index("--output-dir") + 1])
+template = args[args.index("--output-template") + 1]
+(output_dir / (template + ".txt")).write_text("synthetic CLI transcript\\n")
+''')
+    fake_cli.chmod(0o755)
+    fake_ffmpeg = fake_bin / "ffmpeg"
+    fake_ffmpeg.write_text(f"#!{sys.executable}\n")
+    fake_ffmpeg.chmod(0o755)
+    audio = tmp_path / "audio.ogg"
+    audio.write_bytes(b"synthetic ogg")
+    result = subprocess.run(
+        [sys.executable, str(adapter), str(audio)],
+        env={**os.environ, "PATH": str(fake_bin)},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "synthetic CLI transcript"
+
+
 def test_kernel_peer_credentials_are_observed():
     bot = load_bot()
     left, right = __import__("socket").socketpair()
