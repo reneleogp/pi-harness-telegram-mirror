@@ -18,7 +18,7 @@ This checklist records the standalone behavior covered by the package and the va
 
 ## Validation evidence
 
-- `tests/run.sh` passed: 73 test executions (27 combined, 13 behavior-matrix, 6 package, and 27 combined through the non-live E2E wrapper).
+- `tests/run.sh` passed: 73 test executions (27 combined, 13 Telegram, 6 package, and 27 combined through the non-live E2E wrapper).
 - `python3 -m pytest -q` passed: 27 tests.
 - `python3 -m pytest -q tests/test_behavior_matrix.py` passed: 8 tests.
 - `python3 -m pytest -q tests/test_package.py` passed: 6 tests.
