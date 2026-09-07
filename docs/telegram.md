@@ -114,7 +114,7 @@ In the Pi terminal there are two commands: `/telegram` toggles mirror mode, and 
 
 ## The terminal footer
 
-Pi's footer shows `telegram: ✓` in Pi's success color when the mirror is enabled and connected, `telegram: off` when disabled, or `telegram: unavailable` when disconnected.
+Pi's footer shows `telegram: ✓` in Pi's success color when the mirror is enabled and connected, `telegram: ✗` when disabled, or `telegram: unavailable` when disconnected.
 `unavailable` means this Pi session cannot reach the bot service or its local socket, so mirror mode has no reachable owner to report.
 
 Pi renders every extension's status on one shared footer line, sorted by key and joined with a single space.

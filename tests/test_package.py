@@ -56,7 +56,7 @@ import { formatTelegramFooter } from "./extensions/telegram-footer.ts";
 const calls = [];
 const theme = { fg: (color, text) => { calls.push([color, text]); return `<${color}>${text}</${color}>`; } };
 if (formatTelegramFooter(theme, true, true) !== "telegram: <success>✓</success>") throw new Error("enabled footer");
-if (formatTelegramFooter(theme, true, false) !== "telegram: off") throw new Error("disabled footer");
+if (formatTelegramFooter(theme, true, false) !== "telegram: ✗") throw new Error("disabled footer");
 if (formatTelegramFooter(theme, false, true) !== "telegram: unavailable") throw new Error("disconnected footer");
 if (calls.length !== 1 || calls[0][0] !== "success" || calls[0][1] !== "✓") throw new Error("theme was not used");
 '''

@@ -8,7 +8,7 @@ export function formatTelegramFooter(
   mirrorOn: boolean,
 ): string {
   const state = connected
-    ? (mirrorOn ? theme?.fg("success", "✓") ?? "✓" : "off")
+    ? (mirrorOn ? theme?.fg("success", "✓") ?? "✓" : "✗")
     : "unavailable";
   return `telegram: ${state}`;
 }
