@@ -64,7 +64,7 @@ Telegram commands are `/telegram_on`, `/telegram_off`, `/telegram_status`, `/tok
 See [docs/telegram.md](docs/telegram.md) for agent-control behavior, ownership, confirmation, and worker status details.
 `/token_usage` reports concise GPT quota windows in the paired private chat.
 `/workers` optionally lists only the current connected Firstmate home's managed direct reports, with their recorded task descriptions, actual Herdr lifecycle status, and separately labeled current task progress.
-It reports unavailable or not applicable rather than affecting normal mirror behavior when the session is not a Firstmate home, Herdr cannot be read, or a worker uses another runtime.
+It reports unavailable or unknown rather than affecting normal mirror behavior when the session is not a Firstmate home, Herdr cannot be read, or a worker uses another runtime.
 Text is in-memory FIFO with bounded frames and one session.
 Accepted messages optionally receive `Pi · Sent to Pi.`.
 Final visible replies are sent once, unthreaded.

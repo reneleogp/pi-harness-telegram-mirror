@@ -21,7 +21,7 @@ FLEET_COMMAND_TIMEOUT = 12
 HERDR_COMMAND_TIMEOUT = 3
 WORKER_MESSAGE_LIMIT = 3900
 FIELD_LIMIT = 180
-SUPPORTED_HERDR_STATUSES = {"working", "idle", "blocked", "done"}
+SUPPORTED_HERDR_STATUSES = {"working", "idle", "blocked", "done", "unknown"}
 SUPPORTED_BACKENDS = {"tmux", "herdr", "zellij", "orca", "cmux"}
 TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 ENDPOINT_ATOM_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@%+:-]*$")
@@ -310,8 +310,7 @@ def _progress(home: Path, helper: Path, worker: ManagedWorker) -> tuple[str, str
 
 def _herdr_status(worker: ManagedWorker) -> tuple[str, str]:
     if worker.backend != "herdr":
-        runtime = safe_text(worker.backend, 40) if worker.backend != "unknown" else "another"
-        return "not applicable", f"{runtime} runtime"
+        return "unknown", "Not running in Herdr"
     if worker.remote:
         return "unknown", "remote Herdr status unavailable"
     if not worker.metadata_valid or not worker.target_session or not worker.target_pane:
@@ -395,7 +394,6 @@ def _entry(view: WorkerView) -> str:
         "idle": "⚪",
         "blocked": "⛔",
         "done": "✅",
-        "not applicable": "➖",
     }.get(view.herdr_status, "❔")
     lines = [
         f"{icon} {safe_text(view.name, 100)} - {safe_text(view.description, FIELD_LIMIT)}",

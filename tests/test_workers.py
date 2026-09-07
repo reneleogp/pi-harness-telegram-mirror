@@ -140,7 +140,7 @@ def test_empty_fleet_and_non_herdr_task_are_honest(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(workers_module, "_capture_readonly", runner)
     message = workers_module.worker_messages(home)[0]
-    assert "Herdr: not applicable (tmux runtime)" in message
+    assert "Herdr: unknown (Not running in Herdr)" in message
     assert "Progress: paused - awaiting dependency" in message
     assert not any(call[0] == "herdr" for call in calls)
 
