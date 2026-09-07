@@ -5,7 +5,7 @@ Standalone bidirectional Telegram mirror for one Pi terminal session. Review ext
 ## Install
 
 No `v1` tag is currently published on `origin`.
-Do not install from `@v1` until the reviewed commit has been merged and a release tag has been approved.
+Do not install from `@v1` until the reviewed commit has been merged and the repository maintainer has published the release tag.
 
 For isolated validation from a checked-out commit, install the local package without changing global settings:
 

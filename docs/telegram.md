@@ -268,9 +268,11 @@ Every button action is bound to the current transcript revision, so a stale or r
 
 The wire protocol between the bot and the Pi extension is stated once in `${PI_TELEGRAM_PACKAGE}/bin/pi-telegram.py`'s header.
 
-Regression entry points:
+Regression entry points use isolated state and do not contact Telegram:
 
 ```sh
 tests/run.sh
-PI_TELEGRAM_LIVE_E2E=1 tests/pi-telegram-live-e2e.test.sh
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+PI_TELEGRAM_LIVE_E2E=1 PI_TELEGRAM_DIR="$tmp_dir" tests/pi-telegram-live-e2e.test.sh
 ```

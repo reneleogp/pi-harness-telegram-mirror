@@ -25,8 +25,8 @@ This checklist records the standalone behavior covered by the package and the va
 - `python3 -m pytest -q tests/test_telegram.py` passed: 13 tests.
 - Pi extension delivery-mode smoke passed with Node's type stripping loader.
 - Fake HTTP transport and real Unix-socket protocol smoke passed with isolated temporary state.
-- Service-unit tests validated Linux systemd semantics on this host.
-- macOS plist generation and LaunchAgent lifecycle were not executed on this Linux host.
+- Service-unit tests validated macOS LaunchAgent plist generation on this host.
+- Linux systemd generation and lifecycle were not executed on this macOS host.
 - Live Telegram, live voice-model, and installed-service cutover tests were not run by design.
 - The configured live model context requirement was not changed by this package; model selection remains Pi configuration.
 
