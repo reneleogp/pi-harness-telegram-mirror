@@ -48,7 +48,6 @@ def main() -> int:
         target = Path(output) / "transcript.txt"
         command = [
             executable,
-            "transcribe",
             str(audio),
             "--model",
             MODEL,
