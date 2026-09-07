@@ -93,5 +93,5 @@ Run `status`, inspect `service-unit`, confirm `env`/`config.json` permissions, r
 ## Verification
 
 Fake transport tests use isolated state and no real token: `tests/run.sh`.
-The opt-in live E2E command is reserved for a separately approved post-install check: `PI_TELEGRAM_LIVE_E2E=1 tests/pi-telegram-live-e2e.test.sh`.
+The non-live isolated regression wrapper is available as `PI_TELEGRAM_LIVE_E2E=1 tests/pi-telegram-live-e2e.test.sh`; it does not provide production Telegram coverage.
 The current parity checklist and validation evidence are in `docs/port-parity.md`.
