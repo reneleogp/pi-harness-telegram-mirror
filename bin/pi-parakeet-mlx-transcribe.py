@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pi's local macOS Parakeet MLX adapter.
+"""Pi's local Parakeet MLX adapter.
 
 Accepts exactly one audio path and prints only the transcript on stdout.
 Parakeet's progress output is discarded on success and bounded diagnostics are
