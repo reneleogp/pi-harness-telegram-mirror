@@ -99,7 +99,7 @@ In Telegram, these switch it and are never sent to Pi as conversation text:
 
 - `/telegram on` - start mirroring in both directions.
 - `/telegram off` - stop new mirroring.
-- `/telegram status` - report mirroring, whether Pi is connected, and whether confirmations are on.
+- `/telegram status` - report mirror mode, whether Pi is connected, confirmations, and waiting messages, with one line per item.
 - `/token_usage` - report GPT quota remaining and human-readable reset times.
 
 `/token_usage` reads Codex's local app-server rate-limit RPC only; it never reads or exposes credentials and never makes a model inference call. The response is headed `GPT quota` and contains one compact line per available window, with percent left and a relative reset such as `resets in 4d 6h`. Unavailable quota is reported concisely, and no empty rows are shown for other providers.
@@ -114,13 +114,12 @@ In the Pi terminal there are two commands: `/telegram` toggles mirror mode, and 
 
 ## The terminal footer
 
-Pi's footer shows `telegram: on •`, `telegram: off •`, or `telegram: unavailable •`.
+Pi's footer shows `telegram: ✓` in Pi's success color when the mirror is enabled and connected, `telegram: off` when disabled, or `telegram: unavailable` when disconnected.
 `unavailable` means this Pi session cannot reach the bot service or its local socket, so mirror mode has no reachable owner to report.
 
 Pi renders every extension's status on one shared footer line, sorted by key and joined with a single space.
-The Telegram key sorts before the user's voice status, and its text ends with the same `•` that voice uses between `Alt+M` and its model name, so those two statuses read as separate items on that line.
-The separator belongs to the Telegram status itself, because Pi lets an extension shape only its own text, so it stays at the end of the item when voice is absent.
-When the terminal is too narrow for both statuses, Pi keeps the leading Telegram text and truncates the rest to the terminal width.
+The Telegram item has no trailing separator, so Pi's own spacing remains responsible for separating it from neighboring statuses.
+When the terminal is too narrow for all statuses, Pi keeps the leading text and truncates the rest to the terminal width.
 
 The bot owns mirror mode and publishes every change, so the footer updates promptly whether you switch from Telegram or from the terminal, and when the bot starts or stops.
 

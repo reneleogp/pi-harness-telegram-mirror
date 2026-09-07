@@ -752,14 +752,18 @@ class MirrorBot:
         return self.status_text()
 
     def status_text(self) -> str:
-        mirror = "on" if self.mirror_on else "off"
+        mirror = "✅" if self.mirror_on else "❌"
         pi = "connected" if self.connected else "not running"
-        confirmations = "on" if self.config.confirmations else "off"
-        status = f"Mirror is {mirror}. Pi is {pi}. Confirmations are {confirmations}."
+        confirmations = "✅" if self.config.confirmations else "❌"
+        status = [
+            f"Mirror: {mirror}",
+            f"Pi: {pi}",
+            f"Confirmations: {confirmations}",
+        ]
         queued = len(self.queue) + len(self.pending)
         if queued:
-            status += f" {queued} message(s) waiting."
-        return status
+            status.append(f"Messages waiting: {queued}")
+        return "\n".join(status)
 
     def set_confirmations(self, enabled: bool) -> None:
         self.config.confirmations = enabled
