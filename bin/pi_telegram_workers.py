@@ -255,7 +255,7 @@ def _task_titles(backlog: Path) -> dict[str, str]:
     if not _regular_owned_file(backlog):
         return {}
     result = _capture_readonly(
-        ["tasks-axi", "list", "--state", "in_flight", "--file", str(backlog)],
+        ["tasks-axi", "list", "--file", str(backlog)],
         timeout=FLEET_COMMAND_TIMEOUT,
     )
     if result.returncode != 0 or result.timed_out or result.overflow:

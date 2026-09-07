@@ -125,6 +125,40 @@ def test_only_owned_exact_endpoints_are_queried_and_all_statuses_are_preserved(t
         assert call[-2:] == ("--session", "fleet")
 
 
+def test_live_done_worker_keeps_description_without_showing_unrelated_done_task(tmp_path, monkeypatch):
+    home = firstmate_home(tmp_path)
+    (home / "state/done-worker.meta").write_text(
+        herdr_meta("done-worker", "fleet", "w1:p1")
+    )
+    calls = []
+
+    def run(argv, *, timeout, env=None):
+        calls.append(tuple(argv))
+        if argv[0] == "tasks-axi":
+            return workers_module.CommandResult(
+                "count: 2\n"
+                "tasks[2]{id,state,kind,repo,title}:\n"
+                "  done-worker,done,ship,repo,Completed task description\n"
+                "  retired-done,done,ship,repo,Retired task\n"
+                "help[1]:\n", 0,
+            )
+        if argv[0] == "herdr":
+            return workers_module.CommandResult(
+                '{"result":{"agent":{"agent_status":"done"}}}', 0,
+            )
+        return workers_module.CommandResult(
+            "state: done · source: pane · completed\n", 0,
+        )
+
+    monkeypatch.setattr(workers_module, "_capture_readonly", run)
+    message = workers_module.worker_messages(home)[0]
+
+    assert "done-worker - Completed task description" in message
+    assert "retired-done" not in message
+    task_calls = [call for call in calls if call[0] == "tasks-axi"]
+    assert task_calls == [("tasks-axi", "list", "--file", str(home / "data/backlog.md"))]
+
+
 def test_empty_fleet_and_non_herdr_task_are_honest(tmp_path, monkeypatch):
     home = firstmate_home(tmp_path)
     runner, _ = fake_runner_for({}, {})
