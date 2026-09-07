@@ -4,13 +4,24 @@ Standalone bidirectional Telegram mirror for one Pi terminal session. Review ext
 
 ## Install
 
+No `v1` tag is currently published on `origin`.
+Do not install from `@v1` until the reviewed commit has been merged and a release tag has been approved.
+
+For isolated validation from a checked-out commit, install the local package without changing global settings:
+
+```sh
+pi install -l /absolute/path/to/pi-harness-telegram-mirror
+pi list
+pi remove -l /absolute/path/to/pi-harness-telegram-mirror
+```
+
+After the approved release tag exists, the stable commands will be:
+
 ```sh
 pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1
 pi update git:github.com/reneleogp/pi-harness-telegram-mirror@v1
 pi remove git:github.com/reneleogp/pi-harness-telegram-mirror
 ```
-
-The install command targets the reviewed `v1` release; update it only when intentionally selecting a different reviewed release. The published `v1` tag is the stable install target.
 
 `package.json` is a Pi manifest (`pi-package`) and loads `extensions/telegram-mirror.ts`. Python runs from this stable installed package location and uses the standard library; `mistune` is optional for formatting.
 
@@ -81,4 +92,6 @@ Run `status`, inspect `service-unit`, confirm `env`/`config.json` permissions, r
 
 ## Verification
 
-Fake transport tests use no real token: `tests/pi-telegram.test.sh` and `tests/pi-telegram-extension.test.sh`. Opt-in E2E: `PI_TELEGRAM_LIVE_E2E=1 tests/pi-telegram-live-e2e.test.sh`. Issue 1 remains future work.
+Fake transport tests use no real token: `tests/run.sh`.
+Opt-in E2E: `PI_TELEGRAM_LIVE_E2E=1 tests/pi-telegram-live-e2e.test.sh`.
+The current parity checklist and validation evidence are in `docs/port-parity.md`.
