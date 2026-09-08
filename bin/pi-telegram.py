@@ -119,7 +119,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from html import escape
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any, Optional, Union
 
 # Direct execution already places bin/ on sys.path. Tests and embedded loaders
 # import this file by path, so add only its own package directory in that case.
@@ -591,8 +591,6 @@ class MirrorBot:
     _stopping: bool = False
     _command_sequence: int = 0
     _client_generation: int = 0
-    _client_change_event: Optional[asyncio.Event] = None
-    _worker_dispatch_owner: Optional[asyncio.Lock] = None
     command_waiters: dict[int, tuple[int, asyncio.Future[dict[str, Any]]]] = field(default_factory=dict)
     control_menus: "OrderedDict[str, ControlMenu]" = field(default_factory=OrderedDict)
     # The exact root authorized for the currently connected Pi peer.
@@ -608,11 +606,6 @@ class MirrorBot:
         self._sequence += 1
         return f"m{self._sequence}"
 
-    def signal_client_change(self) -> None:
-        if self._client_change_event is not None:
-            self._client_change_event.set()
-        self._client_generation += 1
-        self._client_change_event = asyncio.Event()
 
     async def mirror_terminal(self, text: str, images: Any = None) -> None:
         """Show a terminal submission in Telegram, images included."""
@@ -669,8 +662,7 @@ class MirrorBot:
 
     async def send(self, text: str, reply_to: Optional[int] = None,
                    markup: Optional[dict[str, Any]] = None,
-                   formatted: bool = False,
-                   transport_guard: Optional[Callable[[], bool]] = None) -> Optional[dict[str, Any]]:
+                   formatted: bool = False) -> Optional[dict[str, Any]]:
         result: Optional[dict[str, Any]] = None
         chunks = (split_markdown(text) if formatted else
                   [(chunk, False, chunk) for chunk in chunk_text(text)])
@@ -689,8 +681,6 @@ class MirrorBot:
             if markup is not None and index == len(chunks) - 1:
                 params["reply_markup"] = markup
             try:
-                if transport_guard is not None and not transport_guard():
-                    return None
                 result = await self.api.call("sendMessage", params)
             except TelegramError as exc:
                 if "parse_mode" not in params or not rejected_formatting(exc):
@@ -702,8 +692,6 @@ class MirrorBot:
                 params.pop("parse_mode")
                 params["text"] = source
                 try:
-                    if transport_guard is not None and not transport_guard():
-                        return None
                     result = await self.api.call("sendMessage", params)
                 except TelegramError as plain_exc:
                     log(str(plain_exc))
@@ -878,67 +866,23 @@ class MirrorBot:
             await self.send("Workers unavailable: no connected Firstmate home.",
                             reply_to=reply_to)
             return
-        generation = self._client_generation
         root = self.session_root
-        transport_guard = lambda: (
-            generation == self._client_generation
-            and self.session_root == root
-            and self.connected
-            and self.client_ready
-        )
-        owner = self._worker_dispatch_owner
-        if owner is None:
-            owner = asyncio.Lock()
-            self._worker_dispatch_owner = owner
-
-        async def guarded_send(text: str) -> None:
-            async with owner:
-                if transport_guard():
-                    await self.send(
-                        text, reply_to=reply_to,
-                        transport_guard=transport_guard,
-                    )
-
+        snapshot = "Snapshot: Firstmate home at request time"
         try:
             messages = await asyncio.to_thread(worker_messages, root)
         except WorkersUnavailable as exc:
-            if (generation != self._client_generation or self.session_root != root
-                    or not self.connected or not self.client_ready):
-                return
-            await guarded_send(f"Workers unavailable: {exc}.")
+            await self.send(f"{snapshot}\n\nWorkers unavailable: {exc}.",
+                            reply_to=reply_to)
             return
         except Exception as exc:
             log(f"could not read Firstmate workers: {type(exc).__name__}")
-            if (generation != self._client_generation or self.session_root != root
-                    or not self.connected or not self.client_ready):
-                return
-            await guarded_send("Workers unavailable: status could not be read.")
+            await self.send(f"{snapshot}\n\nWorkers unavailable: status could not be read.",
+                            reply_to=reply_to)
             return
-        if (generation != self._client_generation or self.session_root != root
-                or not self.connected or not self.client_ready):
-            return
-        change_event = self._client_change_event
-        if change_event is None:
-            self._client_change_event = asyncio.Event()
-            change_event = self._client_change_event
+        if messages:
+            messages[0] = f"{snapshot}\n\n{messages[0]}"
         for message in messages:
-            if (generation != self._client_generation or self.session_root != root
-                    or not self.connected or not self.client_ready):
-                return
-            send_task = asyncio.create_task(guarded_send(message))
-            change_task = asyncio.create_task(change_event.wait())
-            done, _ = await asyncio.wait(
-                (send_task, change_task), return_when=asyncio.FIRST_COMPLETED,
-            )
-            if change_task in done:
-                send_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await send_task
-                return
-            change_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await change_task
-            await send_task
+            await self.send(message, reply_to=reply_to)
 
     async def request_pi_result(self, command: str, **values: str) -> dict[str, Any]:
         if not self.connected or not self.client_ready:
@@ -1414,7 +1358,6 @@ class MirrorBot:
         if self.client is not writer:
             return
         generation = self._client_generation
-        self.signal_client_change()
         self.client = None
         self.client_features = set()
         self.client_ready = False
@@ -1453,7 +1396,6 @@ class MirrorBot:
             with contextlib.suppress(OSError):
                 writer.close()
             return
-        self.signal_client_change()
         self.client = writer
         self.client_features = set()
         self.client_ready = False

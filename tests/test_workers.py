@@ -490,8 +490,8 @@ def test_owner_helper_reveals_only_the_live_exact_peers_root(tmp_path, monkeypat
     assert capsys.readouterr().out == ""
 
 
-def test_workers_result_is_discarded_after_session_changes(tmp_path, monkeypatch):
-    bot = load_path("pi_telegram_workers_race_bot", BOT)
+def test_workers_snapshot_survives_session_switch(tmp_path, monkeypatch):
+    bot = load_path("pi_telegram_workers_snapshot_bot", BOT)
     started = threading.Event()
     release = threading.Event()
     calls = []
@@ -502,7 +502,7 @@ def test_workers_result_is_discarded_after_session_changes(tmp_path, monkeypatch
         return ["old session workers"]
 
     class FakeApi:
-        async def call(self, method, params=None, timeout=30):
+        async def call(self, method, params=None, timeout=30, **kwargs):
             calls.append((method, params))
             return {"message_id": len(calls)}
 
@@ -513,53 +513,17 @@ def test_workers_result_is_discarded_after_session_changes(tmp_path, monkeypatch
     mirror.client = object()
     mirror.client_ready = True
     mirror.session_root = tmp_path
-    mirror._client_generation = 1
 
-    async def run_race():
+    async def run_snapshot():
         task = asyncio.create_task(mirror.send_workers(reply_to=4))
         assert await asyncio.to_thread(started.wait, 2)
-        mirror._client_generation = 2
         mirror.session_root = tmp_path / "new-session"
         release.set()
         await task
 
-    asyncio.run(run_race())
-    assert not [params for method, params in calls if method == "sendMessage"]
-
-
-def test_workers_transport_cancels_on_session_change(tmp_path, monkeypatch):
-    bot = load_path("pi_telegram_workers_transport_race_bot", BOT)
-    started = threading.Event()
-    release = threading.Event()
-    completed = []
-
-    class FakeApi:
-        async def call(self, method, params=None, timeout=30, **kwargs):
-            started.set()
-            await asyncio.to_thread(release.wait, 2)
-            completed.append((method, params))
-            return {"message_id": len(completed)}
-
-    monkeypatch.setattr(bot, "worker_messages", lambda _home: ["old session workers"])
-    mirror = bot.MirrorBot(
-        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
-    )
-    mirror.client = object()
-    mirror.client_ready = True
-    mirror.session_root = tmp_path
-    mirror._client_generation = 1
-
-    async def run_race():
-        task = asyncio.create_task(mirror.send_workers(reply_to=4))
-        assert await asyncio.to_thread(started.wait, 2)
-        mirror._client_generation = 2
-        mirror.session_root = tmp_path / "new-session"
-        mirror.signal_client_change()
-        await task
-        release.set()
-
-    asyncio.run(run_race())
-    assert not completed
+    asyncio.run(run_snapshot())
+    sent = [params["text"] for method, params in calls if method == "sendMessage"]
+    assert sent == ["Snapshot: Firstmate home at request time\n\nold session workers"]
 
 
 def test_workers_command_uses_safe_transport_menu_and_multiple_messages(tmp_path, monkeypatch):
@@ -585,7 +549,7 @@ def test_workers_command_uses_safe_transport_menu_and_multiple_messages(tmp_path
         "text": "/workers",
     }}))
     assert [params["text"] for method, params in calls if method == "sendMessage"] == [
-        "page one", "page two"
+        "Snapshot: Firstmate home at request time\n\npage one", "page two"
     ]
     assert all(params["reply_parameters"]["message_id"] == 3 for _, params in calls)
     assert {entry["command"] for entry in bot.MENU_COMMANDS} >= {"workers"}
