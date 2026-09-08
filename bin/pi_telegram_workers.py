@@ -153,9 +153,16 @@ def _firstmate_paths(home: Path) -> tuple[Path, Path, Path]:
     except OSError as exc:
         raise WorkersUnavailable("connected Firstmate home is unavailable") from exc
     state = canonical / "state"
-    crew_state = canonical / "bin" / "fm-crew-state.sh"
-    backlog = canonical / "data" / "backlog.md"
-    if not state.is_dir() or state.is_symlink() or not _regular_owned_file(crew_state):
+    bin_dir = canonical / "bin"
+    data_dir = canonical / "data"
+    crew_state = bin_dir / "fm-crew-state.sh"
+    backlog = data_dir / "backlog.md"
+    if (
+        not state.is_dir() or state.is_symlink()
+        or not bin_dir.is_dir() or bin_dir.is_symlink()
+        or not data_dir.is_dir() or data_dir.is_symlink()
+        or not _regular_owned_file(crew_state)
+    ):
         raise WorkersUnavailable("connected session is not a supported Firstmate home")
     return state, crew_state, backlog
 
@@ -328,6 +335,8 @@ def _herdr_status(worker: ManagedWorker) -> tuple[str, str]:
         return "unknown", "Herdr status timed out"
     if result.overflow:
         return "unknown", "Herdr status response too large"
+    if result.returncode != 0:
+        return "unknown", "Herdr status unavailable"
     try:
         payload = json.loads(result.stdout)
     except (json.JSONDecodeError, TypeError):
@@ -340,10 +349,11 @@ def _herdr_status(worker: ManagedWorker) -> tuple[str, str]:
         if isinstance(agent, dict):
             for identity_key in ("task_id", "endpoint_task_id"):
                 identity = agent.get(identity_key)
-                if identity is not None and (
-                    not isinstance(identity, str) or identity != worker.name
-                ):
-                    return "unknown", "Herdr endpoint absent"
+                if identity is not None:
+                    if not isinstance(identity, str):
+                        return "unknown", "Herdr status unavailable"
+                    if identity != worker.name:
+                        return "unknown", "Herdr endpoint absent"
             status = agent.get("agent_status")
             if isinstance(status, str) and status in SUPPORTED_HERDR_STATUSES:
                 return status, ""

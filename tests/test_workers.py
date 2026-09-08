@@ -189,25 +189,29 @@ def test_absent_timeout_malformed_and_remote_endpoints_report_unknown(tmp_path, 
     home = firstmate_home(tmp_path)
     cases = {
         "absent": ("w1:p1", workers_module.CommandResult(
-            '{"error":{"code":"agent_not_found"}}', 1)),
-        "timeout": ("w2:p1", workers_module.CommandResult("", -1, timed_out=True)),
-        "malformed": ("w3:p1", workers_module.CommandResult("not json", 0)),
-        "result-malformed": ("w4:p1", workers_module.CommandResult(
+            '{"error":{"code":"agent_not_found"}}', 0)),
+        "failed": ("w2:p2", workers_module.CommandResult(
+            '{"result":{"agent":{"agent_status":"working"}}}', 1)),
+        "timeout": ("w3:p1", workers_module.CommandResult("", -1, timed_out=True)),
+        "malformed": ("w4:p1", workers_module.CommandResult("not json", 0)),
+        "result-malformed": ("w5:p1", workers_module.CommandResult(
             '{"result":"malformed"}', 0)),
-        "agent-malformed": ("w5:p1", workers_module.CommandResult(
+        "agent-malformed": ("w6:p1", workers_module.CommandResult(
             '{"result":{"agent":[]}}', 0)),
-        "status-malformed": ("w6:p1", workers_module.CommandResult(
+        "status-malformed": ("w7:p1", workers_module.CommandResult(
             '{"result":{"agent":{"agent_status":[]}}}', 0)),
-        "error-malformed": ("w7:p1", workers_module.CommandResult(
+        "error-malformed": ("w8:p1", workers_module.CommandResult(
             '{"error":{"code":[]}}', 0)),
+        "identity-malformed": ("w9:p1", workers_module.CommandResult(
+            '{"result":{"agent":{"task_id":[]}}}', 0)),
     }
     for name, (pane, _result) in cases.items():
         (home / "state" / f"{name}.meta").write_text(herdr_meta(name, "fleet", pane))
     (home / "state/remote.meta").write_text(
-        herdr_meta("remote", "remote-fleet", "w8:p1", kind="secondmate", remote=True)
+        herdr_meta("remote", "remote-fleet", "w10:p1", kind="secondmate", remote=True)
     )
     (home / "state/bad.meta").write_text(
-        herdr_meta("bad", "fleet", "w9:p1") + "endpoint_task_id=someone-else\n"
+        herdr_meta("bad", "fleet", "w11:p1") + "endpoint_task_id=someone-else\n"
     )
     results = {pane: result for pane, result in cases.values()}
     runner, calls = fake_runner_for(
@@ -220,17 +224,34 @@ def test_absent_timeout_malformed_and_remote_endpoints_report_unknown(tmp_path, 
 
     assert all(view.herdr_status == "unknown" for view in views.values())
     assert "absent" not in views
+    assert "failed" in views
+    assert views["failed"].herdr_note == "Herdr status unavailable"
     assert views["timeout"].herdr_note == "Herdr status timed out"
     assert views["malformed"].herdr_note == "Herdr status unavailable"
     assert views["result-malformed"].herdr_note == "Herdr status unavailable"
     assert views["agent-malformed"].herdr_note == "Herdr status unavailable"
     assert views["status-malformed"].herdr_note == "Herdr status unavailable"
     assert views["error-malformed"].herdr_note == "Herdr status unavailable"
+    assert views["identity-malformed"].herdr_note == "Herdr status unavailable"
     assert views["remote"].herdr_note == "remote Herdr status unavailable"
     assert views["bad"].herdr_note == "endpoint metadata unavailable"
     queried = {call[3] for call in calls if call[0] == "herdr"}
     assert queried == set(results)
-    assert "w8:p1" not in queried and "w9:p1" not in queried
+    assert "w10:p1" not in queried and "w11:p1" not in queried
+
+
+def test_firstmate_paths_reject_symlinked_parent(tmp_path):
+    home = firstmate_home(tmp_path)
+    real_bin = home / "real-bin"
+    real_bin.mkdir()
+    (real_bin / "fm-crew-state.sh").write_text("#!/bin/sh\nexit 0\n")
+    (real_bin / "fm-crew-state.sh").chmod(0o700)
+    (home / "bin/fm-crew-state.sh").unlink()
+    (home / "bin").rmdir()
+    (home / "bin").symlink_to(real_bin, target_is_directory=True)
+
+    with pytest.raises(workers_module.WorkersUnavailable):
+        workers_module.collect_worker_views(home)
 
 
 def test_unavailable_task_query_does_not_claim_stale_workers(tmp_path, monkeypatch):
