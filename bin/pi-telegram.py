@@ -489,16 +489,27 @@ class TelegramApi:
         return await asyncio.to_thread(self._multipart_sync, method, fields, files, timeout)
 
     def request_sync(self, method: str, params: dict[str, Any], timeout: float = 30,
-                     before_request: Optional[Callable[[], bool]] = None) -> Any:
-        if before_request is not None and not before_request():
-            raise TelegramError(f"{method} cancelled before dispatch")
+                     before_request: Optional[Callable[[], bool]] = None,
+                     dispatch_lock: Optional[Any] = None) -> Any:
         url = f"{self._base}/bot{self._token}/{method}"
         body = json.dumps(params).encode("utf-8")
         request = urllib.request.Request(
             url, data=body, headers={"Content-Type": "application/json"}
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            if before_request is not None:
+                if dispatch_lock is None:
+                    if not before_request():
+                        raise TelegramError(f"{method} cancelled before dispatch")
+                    response_context = urllib.request.urlopen(request, timeout=timeout)
+                else:
+                    with dispatch_lock:
+                        if not before_request():
+                            raise TelegramError(f"{method} cancelled before dispatch")
+                        response_context = urllib.request.urlopen(request, timeout=timeout)
+            else:
+                response_context = urllib.request.urlopen(request, timeout=timeout)
+            with response_context as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:400]
@@ -516,9 +527,11 @@ class TelegramApi:
 
     async def call(self, method: str, params: Optional[dict[str, Any]] = None,
                    timeout: float = 30,
-                   before_request: Optional[Callable[[], bool]] = None) -> Any:
+                   before_request: Optional[Callable[[], bool]] = None,
+                   dispatch_lock: Optional[Any] = None) -> Any:
         return await asyncio.to_thread(
-            self.request_sync, method, params or {}, timeout, before_request,
+            self.request_sync, method, params or {}, timeout,
+            before_request, dispatch_lock,
         )
 
     def _download(self, file_path: str, target: Path, timeout: float) -> None:
@@ -598,6 +611,7 @@ class MirrorBot:
     _command_sequence: int = 0
     _client_generation: int = 0
     _client_change_event: Optional[asyncio.Event] = None
+    _workers_dispatch_lock: Any = field(default_factory=threading.Lock)
     command_waiters: dict[int, tuple[int, asyncio.Future[dict[str, Any]]]] = field(default_factory=dict)
     control_menus: "OrderedDict[str, ControlMenu]" = field(default_factory=OrderedDict)
     # The exact root authorized for the currently connected Pi peer.
@@ -614,9 +628,10 @@ class MirrorBot:
         return f"m{self._sequence}"
 
     def signal_client_change(self) -> None:
-        if self._client_change_event is not None:
-            self._client_change_event.set()
-        self._client_change_event = asyncio.Event()
+        with self._workers_dispatch_lock:
+            if self._client_change_event is not None:
+                self._client_change_event.set()
+            self._client_change_event = asyncio.Event()
 
     async def mirror_terminal(self, text: str, images: Any = None) -> None:
         """Show a terminal submission in Telegram, images included."""
@@ -674,7 +689,8 @@ class MirrorBot:
     async def send(self, text: str, reply_to: Optional[int] = None,
                    markup: Optional[dict[str, Any]] = None,
                    formatted: bool = False,
-                   transport_guard: Optional[Callable[[], bool]] = None) -> Optional[dict[str, Any]]:
+                   transport_guard: Optional[Callable[[], bool]] = None,
+                   transport_lock: Optional[Any] = None) -> Optional[dict[str, Any]]:
         result: Optional[dict[str, Any]] = None
         chunks = (split_markdown(text) if formatted else
                   [(chunk, False, chunk) for chunk in chunk_text(text)])
@@ -698,6 +714,7 @@ class MirrorBot:
                 else:
                     result = await self.api.call(
                         "sendMessage", params, before_request=transport_guard,
+                        dispatch_lock=transport_lock,
                     )
             except TelegramError as exc:
                 if "parse_mode" not in params or not rejected_formatting(exc):
@@ -714,6 +731,7 @@ class MirrorBot:
                     else:
                         result = await self.api.call(
                             "sendMessage", params, before_request=transport_guard,
+                            dispatch_lock=transport_lock,
                         )
                 except TelegramError as plain_exc:
                     log(str(plain_exc))
@@ -905,6 +923,7 @@ class MirrorBot:
             await self.send(
                 f"Workers unavailable: {exc}.", reply_to=reply_to,
                 transport_guard=transport_guard,
+                transport_lock=self._workers_dispatch_lock,
             )
             return
         except Exception as exc:
@@ -915,6 +934,7 @@ class MirrorBot:
             await self.send(
                 "Workers unavailable: status could not be read.",
                 reply_to=reply_to, transport_guard=transport_guard,
+                transport_lock=self._workers_dispatch_lock,
             )
             return
         if (generation != self._client_generation or self.session_root != root
@@ -930,7 +950,8 @@ class MirrorBot:
                 return
             send_task = asyncio.create_task(
                 self.send(message, reply_to=reply_to,
-                          transport_guard=transport_guard)
+                          transport_guard=transport_guard,
+                          transport_lock=self._workers_dispatch_lock)
             )
             change_task = asyncio.create_task(change_event.wait())
             done, _ = await asyncio.wait(
