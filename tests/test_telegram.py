@@ -112,6 +112,205 @@ def test_environment_token_is_not_an_authorized_source(tmp_path, monkeypatch):
         raise AssertionError("environment token was accepted")
 
 
+def test_reload_pi_terminal_routes_literal_reload_to_eligible_session(tmp_path):
+    bot = load_bot()
+    calls = []
+    writes = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.client_ready = True
+    mirror.session_root = tmp_path
+
+    async def fake_write(frame):
+        writes.append(frame)
+        return True
+
+    mirror.write_frame = fake_write
+
+    async def exercise():
+        task = asyncio.create_task(mirror.handle_update({"message": {
+            "message_id": 10,
+            "from": {"id": 7},
+            "chat": {"id": 8, "type": "private"},
+            "text": "/reload-pi-terminal",
+        }}))
+        await asyncio.sleep(0)
+        assert writes == [{"t": "command", "id": 1, "command": "reload"}]
+        await mirror.handle_frame({
+            "t": "command_result", "id": 1,
+            "text": bot.RELOAD_PI_TERMINAL_REPLY,
+        })
+        await task
+
+    asyncio.run(exercise())
+    assert [params["text"] for method, params in calls if method == "sendMessage"] == [
+        bot.RELOAD_PI_TERMINAL_REPLY,
+    ]
+    assert calls[-1][1]["reply_parameters"]["message_id"] == 10
+    assert not mirror.queue and not mirror.pending
+
+
+def test_reload_pi_terminal_menu_registration_uses_valid_scoped_commands(tmp_path):
+    bot = load_bot()
+    calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return True
+
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    asyncio.run(mirror.register_menu())
+    assert calls[0][0] == "setMyCommands"
+    params = calls[0][1]
+    assert params["scope"] == {"type": "chat", "chat_id": 8}
+    assert all(item["command"].isascii() and item["command"].replace("_", "").isalnum()
+               and 1 <= len(item["command"]) <= 32 for item in params["commands"])
+    commands = [item["command"] for item in params["commands"]]
+    assert commands == [
+        "token_usage", "agent_info", "workers",
+        "telegram_on", "telegram_off", "telegram_status",
+        "telegram_confirmations_on", "telegram_confirmations_off",
+        "change_model", "change_thinking", "reload_pi_terminal",
+    ]
+    assert "reload-pi-terminal" not in commands
+
+
+def test_reload_pi_terminal_alias_and_menu_registration_are_valid(tmp_path):
+    bot = load_bot()
+    labels = {item["command"]: item["description"] for item in bot.MENU_COMMANDS}
+    assert labels["reload_pi_terminal"] == "Reload the connected Pi terminal"
+    assert all("-" not in item["command"] for item in bot.MENU_COMMANDS)
+    assert bot.RELOAD_PI_TERMINAL_ALIASES["/reload-pi-terminal"] == "reload"
+    assert bot.RELOAD_PI_TERMINAL_ALIASES["/reload_pi_terminal"] == "reload"
+
+    calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.client_ready = True
+    mirror.session_root = tmp_path
+    writes = []
+
+    async def fake_write(frame):
+        writes.append(frame)
+        return True
+
+    mirror.write_frame = fake_write
+
+    async def exercise():
+        task = asyncio.create_task(mirror.handle_update({"message": {
+            "message_id": 11,
+            "from": {"id": 7},
+            "chat": {"id": 8, "type": "private"},
+            "text": "/reload_pi_terminal",
+        }}))
+        await asyncio.sleep(0)
+        await mirror.handle_frame({
+            "t": "command_result", "id": 1,
+            "text": bot.RELOAD_PI_TERMINAL_REPLY,
+        })
+        await task
+
+    asyncio.run(exercise())
+    assert writes == [{"t": "command", "id": 1, "command": "reload"}]
+    assert calls[-1][1]["text"] == bot.RELOAD_PI_TERMINAL_REPLY
+
+
+def test_reload_pi_terminal_rejects_disconnected_unauthorized_and_malformed_messages(tmp_path):
+    bot = load_bot()
+    calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+
+    async def send(message_id, sender, chat, text):
+        await mirror.handle_update({"message": {
+            "message_id": message_id,
+            "from": {"id": sender},
+            "chat": {"id": chat, "type": "private"},
+            "text": text,
+        }})
+
+    async def exercise():
+        await send(1, 7, 8, "/reload-pi-terminal")
+        await send(2, 99, 8, "/reload-pi-terminal")
+        await send(3, 7, 999, "/reload-pi-terminal")
+        await send(4, 7, 8, "/reload-pi-terminal now")
+
+    asyncio.run(exercise())
+    texts = [params["text"] for method, params in calls if method == "sendMessage"]
+    assert texts == [bot.RELOAD_PI_TERMINAL_UNAVAILABLE, bot.RELOAD_PI_TERMINAL_USAGE]
+    assert not mirror.queue and not mirror.pending
+
+
+def test_reload_pi_terminal_duplicate_update_is_not_submitted_twice(tmp_path):
+    bot = load_bot()
+    calls = []
+    writes = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.client_ready = True
+    mirror.session_root = tmp_path
+
+    async def fake_write(frame):
+        writes.append(frame)
+        return True
+
+    mirror.write_frame = fake_write
+    update = {"message": {
+        "message_id": 12,
+        "from": {"id": 7},
+        "chat": {"id": 8, "type": "private"},
+        "text": "/reload-pi-terminal",
+    }}
+
+    async def exercise():
+        first = asyncio.create_task(mirror.handle_update(update))
+        await asyncio.sleep(0)
+        await mirror.handle_frame({
+            "t": "command_result", "id": 1,
+            "text": bot.RELOAD_PI_TERMINAL_REPLY,
+        })
+        await first
+        await mirror.handle_update(update)
+
+    asyncio.run(exercise())
+    assert writes == [{"t": "command", "id": 1, "command": "reload"}]
+    assert len([1 for method, _ in calls if method == "sendMessage"]) == 1
+
+
 def test_token_usage_routes_to_pi_without_queueing_conversation_text():
     bot = load_bot()
     mirror = bot.MirrorBot(bot.Config(Path("/tmp"), "token", 1, 1, "transcribe", "http://fake"), bot.TelegramApi("http://fake", "token"))
@@ -526,6 +725,42 @@ def test_service_definition_contains_runtime_path(tmp_path):
     assert service["ProgramArguments"][2] == "run"
     assert service["EnvironmentVariables"]["PI_TELEGRAM_DIR"] == str(tmp_path)
     assert str(Path.home() / ".local" / "bin") in service["EnvironmentVariables"]["PATH"]
+
+
+def test_reload_does_not_displace_the_connected_session_for_another_peer(tmp_path):
+    bot = load_bot()
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 1, 1, "transcribe", "fake"),
+        bot.TelegramApi("http://fake", "token"),
+    )
+
+    class Writer:
+        def __init__(self):
+            self.closed = False
+        def is_closing(self):
+            return self.closed
+        def close(self):
+            self.closed = True
+
+    first = Writer()
+    second = Writer()
+    mirror.client = first
+    mirror.client_ready = True
+    mirror.session_root = tmp_path
+    async def exercise():
+        reader = asyncio.StreamReader()
+        reader.feed_eof()
+        await mirror.handle_client(reader, second)
+
+    original = bot.peer_owns_session_lock
+    bot.peer_owns_session_lock = lambda _writer: True
+    try:
+        asyncio.run(exercise())
+    finally:
+        bot.peer_owns_session_lock = original
+    assert mirror.client is first
+    assert not first.closed
+    assert second.closed
 
 
 def test_real_unix_socket_delivers_protocol_state(tmp_path):

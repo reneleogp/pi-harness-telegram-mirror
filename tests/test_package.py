@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, plistlib, shlex, subprocess, sys, tempfile
+import json, os, plistlib, shlex, shutil, subprocess, sys, tempfile
 from pathlib import Path
 ROOT=Path(__file__).parents[1]
 OWNER=ROOT/'bin/pi-telegram-owner.py'
@@ -59,6 +59,78 @@ if (calls.length !== 1 || calls[0][0] !== "success" || calls[0][1] !== "✓") th
     result = subprocess.run(
         ['node', '--experimental-strip-types', '--input-type=module', '-'],
         cwd=ROOT, input=script, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_reload_command_uses_authenticated_socket_and_literal_pi_reload(tmp_path):
+    runtime_root = tmp_path / "runtime"
+    shutil.copytree(ROOT / "extensions", runtime_root / "extensions")
+    (runtime_root / "bin").mkdir()
+    shutil.copy2(ROOT / "bin" / "pi-telegram-owner.py", runtime_root / "bin")
+    modules = runtime_root / "node_modules" / "@earendil-works"
+    modules.mkdir(parents=True)
+    installed = Path("/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works")
+    (modules / "pi-coding-agent").symlink_to(
+        Path("/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent"),
+        target_is_directory=True,
+    )
+    for name in ("pi-ai", "pi-tui"):
+        (modules / name).symlink_to(installed / name, target_is_directory=True)
+
+    script = r'''
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createServer } from "node:net";
+import extension from "./extensions/telegram-mirror.ts";
+
+const root = mkdtempSync(join(tmpdir(), "pi-telegram-reload-root-"));
+const home = mkdtempSync(join(tmpdir(), "pi-telegram-reload-home-"));
+process.env.PI_TELEGRAM_DIR = home;
+const config = join(home, "config.json");
+writeFileSync(config, JSON.stringify({ allowed_roots: [root], pi_executable: "node" }) + "\n");
+chmodSync(config, 0o600);
+const socketPath = join(home, "bot.sock");
+const sent = [];
+const handlers = new Map();
+const registered = [];
+const server = createServer((socket) => {
+  socket.on("data", (chunk) => {
+    if (chunk.toString().includes('"t":"hello"')) {
+      socket.write(JSON.stringify({ t: "command", id: 1, command: "reload" }) + "\n");
+    }
+  });
+});
+await new Promise((resolve, reject) => {
+  server.once("error", reject);
+  server.listen(socketPath, resolve);
+});
+const pi = {
+  on(name, handler) { handlers.set(name, handler); },
+  registerCommand(name, definition) { registered.push([name, definition]); },
+  sendUserMessage: async (...args) => { sent.push(args); },
+};
+const ctx = {
+  cwd: root,
+  ui: { theme: { fg: (_color, text) => text }, setStatus() {}, notify() {} },
+};
+extension(pi);
+await handlers.get("session_start")({}, ctx);
+for (let attempt = 0; attempt < 50 && sent.length === 0; attempt++) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+await handlers.get("session_shutdown")({}, ctx);
+await new Promise((resolve) => server.close(resolve));
+const reload = registered.find(([name]) => name === "reload");
+if (!reload) throw new Error("reload command was not registered for the owner");
+if (sent.length !== 1 || sent[0][0] !== "/reload" || sent[0][1]?.expandPromptTemplates !== true) {
+  throw new Error(JSON.stringify(sent));
+}
+'''
+    result = subprocess.run(
+        ["node", "--experimental-strip-types", "--input-type=module", "-"],
+        cwd=runtime_root, input=script, capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
 

@@ -527,6 +527,16 @@ export default function (pi: ExtensionAPI) {
       refreshFooter();
       return;
     }
+    if (frame.t === "command" && frame.command === "reload" && typeof frame.id === "number") {
+      // Acknowledge on the authenticated socket before Pi tears this session
+      // down. The literal /reload goes through Pi's supported command path.
+      write({ t: "command_result", id: frame.id, text: "Pi terminal reload requested." });
+      void pi.sendUserMessage("/reload", { expandPromptTemplates: true }).catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(`pi-telegram-mirror: could not reload Pi: ${detail}`);
+      });
+      return;
+    }
     if (frame.t === "command" && frame.command === "token_usage" && typeof frame.id === "number") {
       // Codex's local app-server reads account quota without model inference;
       // credentials remain inside Codex and are never read by this extension.
@@ -685,6 +695,16 @@ export default function (pi: ExtensionAPI) {
   function registerCommands(): void {
     if (commandsRegistered) return;
     commandsRegistered = true;
+
+    // Pi's built-in /reload is handled before extension commands for terminal
+    // input. Registering the same literal also lets the socket's existing
+    // sendUserMessage path invoke the supported reload flow.
+    pi.registerCommand?.("reload", {
+      description: "Reload Pi extensions and resources.",
+      handler: async (_args, ctx) => {
+        await ctx.reload();
+      },
+    });
 
     pi.registerCommand?.("telegram", {
       description: "Toggle the Telegram terminal mirror.",

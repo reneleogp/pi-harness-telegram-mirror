@@ -105,7 +105,13 @@ In Telegram, these switch it and are never sent to Pi as conversation text:
 - `/change_model` - choose an available model for that live session.
 - `/change_thinking` - choose one of the current model's supported thinking levels.
 - `/workers` - show a labeled read-only snapshot of the connected Firstmate home's managed direct reports.
+- `/reload-pi-terminal` - reload the connected Pi terminal by running Pi's literal `/reload` command.
 
+The reload command is handled directly by the bot and extension and never becomes mirrored conversation text.
+It is accepted only from the paired private chat and only while the exact eligible Pi session owns the authenticated socket.
+The extension acknowledges the request on that socket, then invokes Pi's supported `/reload` behavior through its existing user-message command path.
+It does not restart the Telegram service, kill processes, spawn another Pi session, or affect unrelated sessions.
+A repeated delivery of the same Telegram message is ignored after the reload has been accepted.
 The three agent controls are handled directly by the bot and extension and never become conversation input.
 They apply only to the Pi session that owns the mirror, never worker or other Pi sessions, and never change Pi's saved startup defaults.
 Model and thinking changes are allowed only while the owning session is idle, and the result reports Pi's actual model and effective thinking value after the change.
@@ -129,7 +135,10 @@ Persistent secondmates appear only as this home's direct-report identity; `/work
 Long fleets are split across bounded Telegram messages without dropping entries.
 
 Telegram's own command menu cannot contain a space, so `/telegram on`, `/telegram off`, and `/telegram status` are also published as `/telegram_on`, `/telegram_off`, and `/telegram_status`.
-The menu also publishes `/telegram_confirmations_on`, `/telegram_confirmations_off`, `/token_usage`, `/change_model` as `Change Model`, `/change_thinking` as `Change Thinking Level`, `/agent_info` as `Agent Info`, and `/workers`.
+The menu publishes informational commands first in this order: `/token_usage`, `/agent_info`, and `/workers`.
+It then publishes Telegram settings in this order: `/telegram_on`, `/telegram_off`, `/telegram_status`, `/telegram_confirmations_on`, and `/telegram_confirmations_off`.
+The connected terminal settings follow as `/change_model` (`Change Model`) and `/change_thinking` (`Change Thinking Level`), with `/reload_pi_terminal` (`Reload the connected Pi terminal`) last among the terminal controls.
+Telegram's menu syntax does not accept hyphens, so `/reload_pi_terminal` is only the discoverability alias; typing `/reload-pi-terminal` remains the exact requested command and both spellings perform the same action.
 The aliases exist so every Telegram command is visible and tappable.
 
 While mirror mode is off, an ordinary message is answered with `Telegram mirror is off. Send /telegram_on to enable it.`, naming a command you can tap straight from the menu.
@@ -218,7 +227,8 @@ Messages sent back-to-back while Pi is working steer the run exactly like typing
 When Pi accepts a message, `Pi · Sent to Pi.` replies to that exact message; that means Pi accepted the input, not that Pi finished answering.
 That receipt can be switched off (see Delivery confirmations).
 
-If Pi is not running, the reply is `Pi is not running. Your message is queued until it starts.` and the text waits in memory until the one Pi session connects.
+If Pi is not running, ordinary text replies `Pi is not running. Your message is queued until it starts.` and waits in memory until the one Pi session connects.
+`/reload-pi-terminal` is different: it is not queued, and replies with an actionable connection error until the exact eligible Pi session is connected.
 
 **There is no durable queue, expiry system, replay journal, or retention subsystem.**
 A queued message that has not reached Pi is lost if the bot restarts or its host service stops.
