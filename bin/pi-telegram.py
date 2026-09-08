@@ -488,21 +488,14 @@ class TelegramApi:
                      files: list[tuple[str, str, bytes]], timeout: float = 120) -> Any:
         return await asyncio.to_thread(self._multipart_sync, method, fields, files, timeout)
 
-    def request_sync(self, method: str, params: dict[str, Any], timeout: float = 30,
-                     before_request: Optional[Callable[[], bool]] = None) -> Any:
+    def request_sync(self, method: str, params: dict[str, Any], timeout: float = 30) -> Any:
         url = f"{self._base}/bot{self._token}/{method}"
         body = json.dumps(params).encode("utf-8")
         request = urllib.request.Request(
             url, data=body, headers={"Content-Type": "application/json"}
         )
         try:
-            if before_request is not None:
-                if not before_request():
-                    raise TelegramError(f"{method} cancelled before dispatch")
-                response_context = urllib.request.urlopen(request, timeout=timeout)
-            else:
-                response_context = urllib.request.urlopen(request, timeout=timeout)
-            with response_context as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:400]
@@ -519,11 +512,8 @@ class TelegramApi:
         return payload.get("result")
 
     async def call(self, method: str, params: Optional[dict[str, Any]] = None,
-                   timeout: float = 30,
-                   before_request: Optional[Callable[[], bool]] = None) -> Any:
-        return await asyncio.to_thread(
-            self.request_sync, method, params or {}, timeout, before_request,
-        )
+                   timeout: float = 30) -> Any:
+        return await asyncio.to_thread(self.request_sync, method, params or {}, timeout)
 
     def _download(self, file_path: str, target: Path, timeout: float) -> None:
         write_private_file(target, self._fetch(file_path, MAX_VOICE_BYTES, timeout))
@@ -602,6 +592,7 @@ class MirrorBot:
     _command_sequence: int = 0
     _client_generation: int = 0
     _client_change_event: Optional[asyncio.Event] = None
+    _worker_dispatch_owner: Optional[asyncio.Lock] = None
     command_waiters: dict[int, tuple[int, asyncio.Future[dict[str, Any]]]] = field(default_factory=dict)
     control_menus: "OrderedDict[str, ControlMenu]" = field(default_factory=OrderedDict)
     # The exact root authorized for the currently connected Pi peer.
@@ -698,12 +689,9 @@ class MirrorBot:
             if markup is not None and index == len(chunks) - 1:
                 params["reply_markup"] = markup
             try:
-                if transport_guard is None:
-                    result = await self.api.call("sendMessage", params)
-                else:
-                    result = await self.api.call(
-                        "sendMessage", params, before_request=transport_guard,
-                    )
+                if transport_guard is not None and not transport_guard():
+                    return None
+                result = await self.api.call("sendMessage", params)
             except TelegramError as exc:
                 if "parse_mode" not in params or not rejected_formatting(exc):
                     log(str(exc))
@@ -714,12 +702,9 @@ class MirrorBot:
                 params.pop("parse_mode")
                 params["text"] = source
                 try:
-                    if transport_guard is None:
-                        result = await self.api.call("sendMessage", params)
-                    else:
-                        result = await self.api.call(
-                            "sendMessage", params, before_request=transport_guard,
-                        )
+                    if transport_guard is not None and not transport_guard():
+                        return None
+                    result = await self.api.call("sendMessage", params)
                 except TelegramError as plain_exc:
                     log(str(plain_exc))
                     return None
@@ -901,26 +886,33 @@ class MirrorBot:
             and self.connected
             and self.client_ready
         )
+        owner = self._worker_dispatch_owner
+        if owner is None:
+            owner = asyncio.Lock()
+            self._worker_dispatch_owner = owner
+
+        async def guarded_send(text: str) -> None:
+            async with owner:
+                if transport_guard():
+                    await self.send(
+                        text, reply_to=reply_to,
+                        transport_guard=transport_guard,
+                    )
+
         try:
             messages = await asyncio.to_thread(worker_messages, root)
         except WorkersUnavailable as exc:
             if (generation != self._client_generation or self.session_root != root
                     or not self.connected or not self.client_ready):
                 return
-            await self.send(
-                f"Workers unavailable: {exc}.", reply_to=reply_to,
-                transport_guard=transport_guard,
-            )
+            await guarded_send(f"Workers unavailable: {exc}.")
             return
         except Exception as exc:
             log(f"could not read Firstmate workers: {type(exc).__name__}")
             if (generation != self._client_generation or self.session_root != root
                     or not self.connected or not self.client_ready):
                 return
-            await self.send(
-                "Workers unavailable: status could not be read.",
-                reply_to=reply_to, transport_guard=transport_guard,
-            )
+            await guarded_send("Workers unavailable: status could not be read.")
             return
         if (generation != self._client_generation or self.session_root != root
                 or not self.connected or not self.client_ready):
@@ -933,10 +925,7 @@ class MirrorBot:
             if (generation != self._client_generation or self.session_root != root
                     or not self.connected or not self.client_ready):
                 return
-            send_task = asyncio.create_task(
-                self.send(message, reply_to=reply_to,
-                          transport_guard=transport_guard)
-            )
+            send_task = asyncio.create_task(guarded_send(message))
             change_task = asyncio.create_task(change_event.wait())
             done, _ = await asyncio.wait(
                 (send_task, change_task), return_when=asyncio.FIRST_COMPLETED,
