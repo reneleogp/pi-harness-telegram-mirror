@@ -251,20 +251,22 @@ def _managed_workers(state: Path) -> list[ManagedWorker]:
     return [_worker_from_meta(path) for path in paths]
 
 
-def _task_titles(backlog: Path) -> dict[str, str]:
+def _task_titles(backlog: Path) -> Optional[dict[str, str]]:
     if not _regular_owned_file(backlog):
-        return {}
+        return None
     result = _capture_readonly(
         ["tasks-axi", "list", "--file", str(backlog)],
         timeout=FLEET_COMMAND_TIMEOUT,
     )
     if result.returncode != 0 or result.timed_out or result.overflow:
-        return {}
+        return None
     titles: dict[str, str] = {}
     in_rows = False
+    saw_rows_header = False
     for line in result.stdout.splitlines():
         if re.match(r"^tasks\[\d+\]\{id,state,kind,repo,title\}:$", line):
             in_rows = True
+            saw_rows_header = True
             continue
         if not in_rows:
             continue
@@ -276,7 +278,7 @@ def _task_titles(backlog: Path) -> dict[str, str]:
             continue
         if len(row) == 5 and TASK_ID_PATTERN.fullmatch(row[0]):
             titles[row[0]] = safe_text(row[4], FIELD_LIMIT)
-    return titles
+    return titles if saw_rows_header else None
 
 
 def _progress(home: Path, helper: Path, worker: ManagedWorker) -> tuple[str, str]:
@@ -335,9 +337,18 @@ def _herdr_status(worker: ManagedWorker) -> tuple[str, str]:
     result_payload = payload.get("result")
     if isinstance(result_payload, dict):
         agent = result_payload.get("agent")
-        status = agent.get("agent_status") if isinstance(agent, dict) else None
-        if status in SUPPORTED_HERDR_STATUSES:
-            return str(status), ""
+        if isinstance(agent, dict):
+            for identity_key in ("task_id", "endpoint_task_id"):
+                identity = agent.get(identity_key)
+                if identity is not None and (
+                    not isinstance(identity, str) or identity != worker.name
+                ):
+                    return "unknown", "Herdr endpoint absent"
+            status = agent.get("agent_status")
+            if status in SUPPORTED_HERDR_STATUSES:
+                return str(status), ""
+        else:
+            return "unknown", "Herdr status unavailable"
     error = payload.get("error")
     code = error.get("code") if isinstance(error, dict) else None
     if code in {"agent_not_found", "pane_not_found"}:
@@ -359,9 +370,12 @@ def collect_worker_views(home: Path) -> list[WorkerView]:
     canonical = state.parent
     workers = _managed_workers(state)
     titles = _task_titles(backlog)
+    if titles is not None:
+        workers = [worker for worker in workers if worker.name in titles]
 
     def inspect(worker: ManagedWorker) -> WorkerView:
-        description = titles.get(worker.name, "Description unavailable")
+        description = (titles.get(worker.name, "Description unavailable")
+                       if titles is not None else "Description unavailable")
         if not _metadata_is_current(worker):
             return WorkerView(
                 worker.name, description, "unknown",
@@ -387,7 +401,9 @@ def collect_worker_views(home: Path) -> list[WorkerView]:
     if not workers:
         return []
     with ThreadPoolExecutor(max_workers=min(8, len(workers))) as pool:
-        return list(pool.map(inspect, workers))
+        views = list(pool.map(inspect, workers))
+    return [view for view in views
+            if view.herdr_note != "Herdr endpoint absent"]
 
 
 def _entry(view: WorkerView) -> str:

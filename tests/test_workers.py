@@ -130,6 +130,9 @@ def test_live_done_worker_keeps_description_without_showing_unrelated_done_task(
     (home / "state/done-worker.meta").write_text(
         herdr_meta("done-worker", "fleet", "w1:p1")
     )
+    (home / "state/retired-worker.meta").write_text(
+        herdr_meta("retired-worker", "fleet", "w2:p1")
+    )
     calls = []
 
     def run(argv, *, timeout, env=None):
@@ -154,6 +157,7 @@ def test_live_done_worker_keeps_description_without_showing_unrelated_done_task(
     message = workers_module.worker_messages(home)[0]
 
     assert "done-worker - Completed task description" in message
+    assert "retired-worker" not in message
     assert "retired-done" not in message
     task_calls = [call for call in calls if call[0] == "tasks-axi"]
     assert task_calls == [("tasks-axi", "list", "--file", str(home / "data/backlog.md"))]
@@ -209,7 +213,7 @@ def test_absent_timeout_malformed_and_remote_endpoints_report_unknown(tmp_path, 
     views = {view.name: view for view in workers_module.collect_worker_views(home)}
 
     assert all(view.herdr_status == "unknown" for view in views.values())
-    assert views["absent"].herdr_note == "Herdr endpoint absent"
+    assert "absent" not in views
     assert views["timeout"].herdr_note == "Herdr status timed out"
     assert views["malformed"].herdr_note == "Herdr status unavailable"
     assert views["result-malformed"].herdr_note == "Herdr status unavailable"
@@ -219,6 +223,21 @@ def test_absent_timeout_malformed_and_remote_endpoints_report_unknown(tmp_path, 
     queried = {call[3] for call in calls if call[0] == "herdr"}
     assert queried == set(results)
     assert "w6:p1" not in queried and "w7:p1" not in queried
+
+
+def test_reused_herdr_endpoint_is_excluded(tmp_path, monkeypatch):
+    home = firstmate_home(tmp_path)
+    (home / "state/reused.meta").write_text(herdr_meta("reused", "fleet", "w1:p1"))
+    runner, _ = fake_runner_for(
+        {"reused": "Reused task"},
+        {"w1:p1": workers_module.CommandResult(
+            '{"result":{"agent":{"task_id":"different-task",'
+            '"agent_status":"working"}}}', 0,
+        )},
+    )
+    monkeypatch.setattr(workers_module, "_capture_readonly", runner)
+
+    assert workers_module.worker_messages(home) == ["No Firstmate-managed workers."]
 
 
 def test_stale_status_history_is_not_read_and_current_state_failures_are_bounded(tmp_path, monkeypatch):
