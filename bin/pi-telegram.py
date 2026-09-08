@@ -160,6 +160,28 @@ DEFAULT_TRANSCRIBE_COMMAND = "parakeet-tdt-0.6b-v3"
 PARAKEET_TRANSCRIBE_ADAPTER = str(Path(__file__).resolve().with_name("pi-parakeet-mlx-transcribe.py"))
 
 
+def snapshot_identity(root: Path) -> str:
+    try:
+        parts = list(root.resolve(strict=True).parts)
+    except (OSError, TypeError, ValueError):
+        return "Snapshot: Firstmate home unavailable"
+    for marker in ("Users", "home"):
+        if marker in parts:
+            parts = parts[parts.index(marker) + 2:]
+            break
+    else:
+        parts = parts[-2:]
+    clean: list[str] = []
+    for part in parts[-2:]:
+        value = "".join(char if char.isalnum() or char in "._-" else "-"
+                         for char in part).strip(".-")
+        if value:
+            clean.append(value[:60])
+    if not clean:
+        return "Snapshot: Firstmate home unavailable"
+    return f"Snapshot: {'/'.join(clean)}"
+
+
 def default_transcribe_command() -> str:
     """Use the package-owned MLX adapter on supported service platforms."""
     if platform.system() in ("Darwin", "Linux"):
@@ -867,7 +889,7 @@ class MirrorBot:
                             reply_to=reply_to)
             return
         root = self.session_root
-        snapshot = "Snapshot: Firstmate home at request time"
+        snapshot = snapshot_identity(root)
         try:
             messages = await asyncio.to_thread(worker_messages, root)
         except WorkersUnavailable as exc:

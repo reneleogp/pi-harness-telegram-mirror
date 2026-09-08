@@ -490,6 +490,26 @@ def test_owner_helper_reveals_only_the_live_exact_peers_root(tmp_path, monkeypat
     assert capsys.readouterr().out == ""
 
 
+def test_snapshot_identity_is_safe_and_distinguishes_homes(tmp_path):
+    bot = load_path("pi_telegram_workers_snapshot_identity_bot", BOT)
+    first = tmp_path / "GitHub" / "firstmate"
+    second = tmp_path / "Other" / "firstmate"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    assert bot.snapshot_identity(first) == "Snapshot: GitHub/firstmate"
+    assert bot.snapshot_identity(second) == "Snapshot: Other/firstmate"
+    unsafe = tmp_path / "GitHub<\x01>" / "first\x02mate"
+    unsafe.mkdir(parents=True)
+    identity = bot.snapshot_identity(unsafe)
+    assert identity.startswith("Snapshot: GitHub/")
+    assert "first-mate" in identity
+    assert str(tmp_path) not in identity
+    assert "\x01" not in identity
+    assert bot.snapshot_identity(tmp_path / "missing") == (
+        "Snapshot: Firstmate home unavailable"
+    )
+
+
 def test_workers_snapshot_survives_session_switch(tmp_path, monkeypatch):
     bot = load_path("pi_telegram_workers_snapshot_bot", BOT)
     started = threading.Event()
@@ -523,7 +543,9 @@ def test_workers_snapshot_survives_session_switch(tmp_path, monkeypatch):
 
     asyncio.run(run_snapshot())
     sent = [params["text"] for method, params in calls if method == "sendMessage"]
-    assert sent == ["Snapshot: Firstmate home at request time\n\nold session workers"]
+    assert sent == [
+        f"{bot.snapshot_identity(tmp_path)}\n\nold session workers"
+    ]
 
 
 def test_workers_command_uses_safe_transport_menu_and_multiple_messages(tmp_path, monkeypatch):
@@ -549,7 +571,7 @@ def test_workers_command_uses_safe_transport_menu_and_multiple_messages(tmp_path
         "text": "/workers",
     }}))
     assert [params["text"] for method, params in calls if method == "sendMessage"] == [
-        "Snapshot: Firstmate home at request time\n\npage one", "page two"
+        f"{bot.snapshot_identity(tmp_path)}\n\npage one", "page two"
     ]
     assert all(params["reply_parameters"]["message_id"] == 3 for _, params in calls)
     assert {entry["command"] for entry in bot.MENU_COMMANDS} >= {"workers"}
