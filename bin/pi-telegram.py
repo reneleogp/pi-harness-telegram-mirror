@@ -27,11 +27,13 @@ Wire protocol (newline-delimited JSON, both directions):
   extension -> bot  {"t":"hello","features":["image"]}
                     {"t":"terminal","text":...,"images":[...]} terminal submission
                     {"t":"reply","text":...}        final visible Pi text
-                    {"t":"command","id":N,"command":"toggle"|"on"|"off"|"status"|"token_usage"}
+                    {"t":"command","id":N,"command":"toggle"|"on"|"off"|"status"}
+                    {"t":"command_result","id":N,"text":...,...optional menu data}
                     {"t":"set","setting":"confirmations","value":bool}
                     {"t":"accepted","id":"..."}     Pi accepted that message
                     {"t":"rejected","id":"..."}     Pi could not accept it
   bot -> extension  {"t":"deliver","id":"...","text":...,"image":{...}}
+                    {"t":"command","id":N,"command":"token_usage"|"agent_info"|"change_model"|"change_thinking",...selection}
                     {"t":"command_result","id":N|null,"text":...}
                     {"t":"state","mirror":bool,"confirmations":bool}
 
@@ -51,6 +53,9 @@ Pi as conversation text:
   /telegram on | off | status        Telegram
   /telegram_on | /telegram_off | /telegram_status
   /token_usage                     GPT quota (paired chat only)
+  /agent_info                      current model, thinking, and context
+  /change_model                    choose the owning Pi session's model
+  /change_thinking                 choose its thinking level
   /telegram_confirmations_on | /telegram_confirmations_off
                                      Telegram menu aliases, published to the
                                      paired chat with setMyCommands because
@@ -164,7 +169,10 @@ HELP_REPLY = (
     "Pi terminal mirror.\n"
     "/telegram_on or /telegram on - start mirroring\n"
     "/telegram_off or /telegram off - stop mirroring\n"
-    "/telegram_status or /telegram status - show mirror and Pi state"
+    "/telegram_status or /telegram status - show mirror and Pi state\n"
+    "/agent_info - show model, thinking, and context\n"
+    "/change_model - change the connected session model\n"
+    "/change_thinking - change its thinking level"
 )
 
 MIRROR_COMMANDS = ("on", "off", "status")
@@ -173,6 +181,23 @@ MIRROR_COMMANDS = ("on", "off", "status")
 # aliases are the menu entries; both forms do the same thing.
 TOKEN_USAGE_COMMAND = "token_usage"
 TOKEN_USAGE_UNAVAILABLE = "GPT quota unavailable."
+AGENT_CONTROL_COMMANDS = {
+    "/agent_info": "agent_info",
+    "/change_model": "change_model",
+    "/change_thinking": "change_thinking",
+}
+AGENT_CONTROL_USAGE = {
+    "agent_info": "Usage: /agent_info",
+    "change_model": "Usage: /change_model",
+    "change_thinking": "Usage: /change_thinking",
+}
+AGENT_CONTROL_UNAVAILABLE = "Agent controls unavailable: Pi is not connected."
+STALE_CONTROL_REPLY = "This control belongs to an old Pi session. Run the command again."
+CONTROL_PAGE_SIZE = 8
+MAX_CONTROL_CHOICES = 2000
+MAX_CONTROL_MENUS = 32
+CONTROL_MENU_TTL = 15 * 60
+CONTROL_LEVELS = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
 MIRROR_ALIASES = {
     "/telegram_on": "on",
     "/telegram_off": "off",
@@ -189,6 +214,9 @@ MENU_COMMANDS = [
     {"command": "telegram_confirmations_off",
      "description": "Stop confirming accepted messages"},
     {"command": "token_usage", "description": "Show GPT quota"},
+    {"command": "change_model", "description": "Change Model"},
+    {"command": "change_thinking", "description": "Change Thinking Level"},
+    {"command": "agent_info", "description": "Agent Info"},
 ]
 # Images the captain can send from the paired chat. Anything else is refused
 # before a byte is downloaded.
@@ -504,6 +532,17 @@ class Voice:
 
 
 @dataclass
+class ControlMenu:
+    kind: str
+    generation: int
+    text: str
+    choices: list[dict[str, str]]
+    created: float
+    target: Optional[dict[str, str]] = None
+    message_id: Optional[int] = None
+
+
+@dataclass
 class MirrorBot:
     config: Config
     api: TelegramApi
@@ -523,7 +562,9 @@ class MirrorBot:
     _sequence: int = 0
     _stopping: bool = False
     _command_sequence: int = 0
-    command_waiters: dict[int, asyncio.Future[str]] = field(default_factory=dict)
+    _client_generation: int = 0
+    command_waiters: dict[int, tuple[int, asyncio.Future[dict[str, Any]]]] = field(default_factory=dict)
+    control_menus: "OrderedDict[str, ControlMenu]" = field(default_factory=OrderedDict)
 
     # --- helpers ---
 
@@ -680,7 +721,9 @@ class MirrorBot:
             sender = callback.get("from") or {}
             source = callback.get("message") or {}
             chat = source.get("chat") or {}
-            if sender.get("id") != self.config.user_id or chat.get("id") != self.config.chat_id:
+            if (sender.get("id") != self.config.user_id or
+                    chat.get("id") != self.config.chat_id or
+                    chat.get("type") != "private"):
                 return
             await self.handle_callback(callback)
 
@@ -693,9 +736,18 @@ class MirrorBot:
                 await self.send(self.apply_command(command), reply_to=message_id)
                 await self.broadcast_state()
                 return
-            head = text.strip().split(" ", 1)[0].split("@", 1)[0]
+            parts = text.strip().split(maxsplit=1)
+            head = parts[0].split("@", 1)[0] if parts else ""
+            arguments = parts[1].strip() if len(parts) > 1 else ""
             if head == "/token_usage":
                 await self.send(await self.request_pi_command(TOKEN_USAGE_COMMAND), reply_to=message_id)
+                return
+            control = AGENT_CONTROL_COMMANDS.get(head)
+            if control:
+                if arguments:
+                    await self.send(AGENT_CONTROL_USAGE[control], reply_to=message_id)
+                else:
+                    await self.present_agent_control(control, int(message_id))
                 return
             if head in ("/start", "/help", "/telegram"):
                 await self.send(HELP_REPLY, reply_to=message_id)
@@ -775,21 +827,125 @@ class MirrorBot:
             # The choice still applies to this run; only its persistence failed.
             log(f"could not persist the confirmations setting: {exc}")
 
-    async def request_pi_command(self, command: str) -> str:
+    async def request_pi_result(self, command: str, **values: str) -> dict[str, Any]:
         if not self.connected or not self.client_ready:
-            return TOKEN_USAGE_UNAVAILABLE
+            return {"text": AGENT_CONTROL_UNAVAILABLE}
         self._command_sequence += 1
         command_id = self._command_sequence
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        self.command_waiters[command_id] = future
-        if not await self.write_frame({"t": "command", "id": command_id, "command": command}):
+        generation = self._client_generation
+        future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        self.command_waiters[command_id] = (generation, future)
+        frame: dict[str, Any] = {"t": "command", "id": command_id, "command": command}
+        frame.update(values)
+        if not await self.write_frame(frame):
             self.command_waiters.pop(command_id, None)
-            return TOKEN_USAGE_UNAVAILABLE
+            return {"text": AGENT_CONTROL_UNAVAILABLE}
         try:
-            return await asyncio.wait_for(future, timeout=20)
+            result = await asyncio.wait_for(future, timeout=20)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self.command_waiters.pop(command_id, None)
+            return {"text": AGENT_CONTROL_UNAVAILABLE}
+        if generation != self._client_generation or not self.connected or not self.client_ready:
+            return {"text": "The Pi session changed before the result could be verified."}
+        return result
+
+    async def request_pi_command(self, command: str) -> str:
+        result = await self.request_pi_result(command)
+        text = result.get("text")
+        if not isinstance(text, str) or not text or text == AGENT_CONTROL_UNAVAILABLE:
             return TOKEN_USAGE_UNAVAILABLE
+        if text == "The Pi session changed before the result could be verified.":
+            return TOKEN_USAGE_UNAVAILABLE
+        return text
+
+    def prune_control_menus(self) -> None:
+        expired_before = time.monotonic() - CONTROL_MENU_TTL
+        for token, menu in list(self.control_menus.items()):
+            if menu.created < expired_before:
+                self.control_menus.pop(token, None)
+        while len(self.control_menus) >= MAX_CONTROL_MENUS:
+            self.control_menus.popitem(last=False)
+
+    def control_markup(self, token: str, menu: ControlMenu, page: int) -> dict[str, Any]:
+        pages = max(1, (len(menu.choices) + CONTROL_PAGE_SIZE - 1) // CONTROL_PAGE_SIZE)
+        page = min(max(page, 0), pages - 1)
+        start = page * CONTROL_PAGE_SIZE
+        rows = [[{
+            "text": choice["label"],
+            "callback_data": f"c:{token}:s:{index}",
+        }] for index, choice in enumerate(menu.choices[start:start + CONTROL_PAGE_SIZE], start)]
+        if pages > 1:
+            navigation = []
+            if page > 0:
+                navigation.append({"text": "Previous", "callback_data": f"c:{token}:p:{page - 1}"})
+            navigation.append({"text": f"{page + 1}/{pages}", "callback_data": f"c:{token}:p:{page}"})
+            if page + 1 < pages:
+                navigation.append({"text": "Next", "callback_data": f"c:{token}:p:{page + 1}"})
+            rows.append(navigation)
+        return {"inline_keyboard": rows}
+
+    def control_text(self, menu: ControlMenu, page: int) -> str:
+        pages = max(1, (len(menu.choices) + CONTROL_PAGE_SIZE - 1) // CONTROL_PAGE_SIZE)
+        return menu.text if pages == 1 else f"{menu.text}\nPage {page + 1} of {pages}"
+
+    def parse_control_result(self, result: dict[str, Any]) -> Optional[ControlMenu]:
+        kind = result.get("menu")
+        choices = result.get("choices")
+        text = result.get("text")
+        if kind not in ("model", "thinking") or not isinstance(text, str) or not text.strip():
+            return None
+        if not isinstance(choices, list) or not choices or len(choices) > MAX_CONTROL_CHOICES:
+            return None
+        parsed: list[dict[str, str]] = []
+        for choice in choices:
+            if not isinstance(choice, dict) or not isinstance(choice.get("label"), str):
+                return None
+            label = utf16_prefix(choice["label"].replace("\n", " ").strip(), 64)
+            if not label:
+                return None
+            if kind == "model":
+                if not isinstance(choice.get("provider"), str) or not isinstance(choice.get("model"), str):
+                    return None
+                parsed.append({"label": label, "provider": choice["provider"], "model": choice["model"]})
+            else:
+                if choice.get("level") not in CONTROL_LEVELS:
+                    return None
+                parsed.append({"label": label, "level": choice["level"]})
+        target = result.get("target")
+        parsed_target: Optional[dict[str, str]] = None
+        if kind == "thinking":
+            if (not isinstance(target, dict) or not isinstance(target.get("provider"), str) or
+                    not isinstance(target.get("model"), str)):
+                return None
+            parsed_target = {"provider": target["provider"], "model": target["model"]}
+        return ControlMenu(
+            kind=kind,
+            generation=self._client_generation,
+            text=utf16_prefix(text, TELEGRAM_TEXT_LIMIT - 32),
+            choices=parsed,
+            target=parsed_target,
+            created=time.monotonic(),
+        )
+
+    async def present_agent_control(self, command: str, reply_to: int) -> None:
+        result = await self.request_pi_result(command)
+        menu = self.parse_control_result(result)
+        if menu is None:
+            text = result.get("text")
+            await self.send(text if isinstance(text, str) and text else AGENT_CONTROL_UNAVAILABLE,
+                            reply_to=reply_to)
+            return
+        self.prune_control_menus()
+        token = secrets.token_urlsafe(9)
+        self.control_menus[token] = menu
+        sent = await self.send(
+            self.control_text(menu, 0), reply_to=reply_to,
+            markup=self.control_markup(token, menu, 0),
+        )
+        if sent is None or not isinstance(sent.get("message_id"), int):
+            self.control_menus.pop(token, None)
+            return
+        menu.message_id = int(sent["message_id"])
 
     async def broadcast_state(self) -> None:
         """Push the state Pi's footer and settings render, after every change."""
@@ -950,6 +1106,10 @@ class MirrorBot:
     async def handle_callback(self, callback: dict[str, Any]) -> None:
         callback_id = str(callback.get("id"))
         data = str(callback.get("data") or "")
+        control = parse_control_callback(data)
+        if control is not None:
+            await self.handle_control_callback(callback, callback_id, control)
+            return
         parsed = parse_callback(data)
         if parsed is None:
             await self.answer_callback(callback_id, "Unsupported button.")
@@ -989,6 +1149,54 @@ class MirrorBot:
             entry.revision += 1
             await self.retire_prompt(entry)
             await self.edit_card(entry.card_id, entry.text, main_markup(entry.voice_id, entry.revision))
+
+    async def handle_control_callback(
+        self, callback: dict[str, Any], callback_id: str,
+        parsed: tuple[str, str, int],
+    ) -> None:
+        token, action, value = parsed
+        self.prune_control_menus()
+        menu = self.control_menus.get(token)
+        source = callback.get("message") or {}
+        source_id = source.get("message_id")
+        if menu is None or not isinstance(source_id, int) or source_id != menu.message_id:
+            await self.answer_callback(callback_id, STALE_CONTROL_REPLY)
+            return
+        if (menu.generation != self._client_generation or not self.connected or
+                not self.client_ready):
+            await self.answer_callback(callback_id, STALE_CONTROL_REPLY)
+            return
+        pages = max(1, (len(menu.choices) + CONTROL_PAGE_SIZE - 1) // CONTROL_PAGE_SIZE)
+        if action == "p":
+            if value < 0 or value >= pages:
+                await self.answer_callback(callback_id, "Invalid page.")
+                return
+            await self.answer_callback(callback_id)
+            await self.edit_card(
+                source_id, self.control_text(menu, value),
+                self.control_markup(token, menu, value),
+            )
+            return
+        if action != "s" or value < 0 or value >= len(menu.choices):
+            await self.answer_callback(callback_id, "Invalid choice.")
+            return
+        self.control_menus.pop(token, None)
+        await self.answer_callback(callback_id)
+        choice = menu.choices[value]
+        if menu.kind == "model":
+            result = await self.request_pi_result(
+                "change_model", provider=choice["provider"], model=choice["model"],
+            )
+        else:
+            result = await self.request_pi_result(
+                "change_thinking", level=choice["level"],
+                provider=menu.target["provider"] if menu.target else "",
+                model=menu.target["model"] if menu.target else "",
+            )
+        text = result.get("text")
+        response = text if isinstance(text, str) and text else AGENT_CONTROL_UNAVAILABLE
+        if not await self.edit_card(source_id, response, None):
+            await self.send(response, reply_to=source_id)
 
     async def apply_edit(self, voice_id: int, text: str, message_id: int) -> None:
         entry = self.voices.get(voice_id)
@@ -1092,9 +1300,15 @@ class MirrorBot:
     async def drop_client(self, writer: asyncio.StreamWriter) -> None:
         if self.client is not writer:
             return
+        generation = self._client_generation
         self.client = None
         self.client_features = set()
         self.client_ready = False
+        for command_id, (waiting_generation, waiter) in list(self.command_waiters.items()):
+            if waiting_generation == generation:
+                self.command_waiters.pop(command_id, None)
+                if not waiter.done():
+                    waiter.set_result({"text": AGENT_CONTROL_UNAVAILABLE})
         # Anything delivered but not yet confirmed goes back to the front of the
         # queue in order. A session that vanished between accepting a message
         # and confirming it can therefore see that one message twice, which is
@@ -1125,6 +1339,7 @@ class MirrorBot:
                 writer.close()
             return
         self.client = writer
+        self._client_generation += 1
         self.client_features = set()
         self.client_ready = False
         log(f"mirroring for {peer_description(writer)}")
@@ -1153,9 +1368,11 @@ class MirrorBot:
     async def handle_frame(self, frame: dict[str, Any]) -> None:
         kind = frame.get("t")
         if kind == "command_result" and isinstance(frame.get("id"), int):
-            waiter = self.command_waiters.pop(frame["id"], None)
-            if waiter is not None and not waiter.done():
-                waiter.set_result(frame.get("text") if isinstance(frame.get("text"), str) else TOKEN_USAGE_UNAVAILABLE)
+            waiting = self.command_waiters.pop(frame["id"], None)
+            if waiting is not None:
+                generation, waiter = waiting
+                if generation == self._client_generation and not waiter.done():
+                    waiter.set_result(frame)
             return
         if kind == "hello":
             # The bridge declares what it can render; anything it does not claim
@@ -1797,6 +2014,21 @@ def edit_markup(entry: Voice) -> dict[str, Any]:
         row.append({"text": "Copy text", "copy_text": {"text": entry.text}})
     row.append({"text": "Back", "callback_data": f"v:{entry.voice_id}:{entry.revision}:back"})
     return {"inline_keyboard": [row]}
+
+
+def parse_control_callback(data: str) -> Optional[tuple[str, str, int]]:
+    parts = data.split(":")
+    if len(parts) != 4 or parts[0] != "c" or parts[2] not in ("s", "p"):
+        return None
+    token = parts[1]
+    if not token or len(token) > 24 or any(not (char.isascii() and (char.isalnum() or char in "-_")) for char in token):
+        return None
+    if not parts[3].isascii() or not parts[3].isdigit():
+        return None
+    try:
+        return token, parts[2], int(parts[3])
+    except ValueError:
+        return None
 
 
 def parse_callback(data: str) -> Optional[tuple[int, int, str]]:

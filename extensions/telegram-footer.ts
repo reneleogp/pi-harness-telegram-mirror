@@ -1,5 +1,5 @@
 export type FooterTheme = {
-  fg: (color: string, text: string) => string;
+  fg: (color: "success", text: string) => string;
 };
 
 export function formatTelegramFooter(

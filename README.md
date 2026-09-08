@@ -4,8 +4,7 @@ Standalone bidirectional Telegram mirror for one Pi terminal session. Review ext
 
 ## Install
 
-No `v1` tag is currently published on `origin`.
-Do not install from `@v1` until the reviewed commit has been merged and the repository maintainer has published the release tag.
+The stable `v1` tag is published on `origin`.
 
 For isolated validation from a checked-out commit, install the local package without changing global settings:
 
@@ -15,7 +14,7 @@ pi list
 pi remove -l /absolute/path/to/pi-harness-telegram-mirror
 ```
 
-After the approved release tag exists, the stable commands will be:
+Stable install commands are:
 
 ```sh
 pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1
@@ -58,7 +57,17 @@ Linux systemd user services and macOS LaunchAgents are supported. Linux uses `~/
 
 ## Behavior and Pi commands
 
-The extension registers `/telegram` and `/telegram-settings`; the latter controls footer visibility and delivery confirmations. Telegram commands are `/telegram_on`, `/telegram_off`, `/telegram_status`, and `/token_usage` (plus spaced forms where applicable). `/token_usage` reports concise GPT quota windows in the paired private chat. Text is in-memory FIFO with bounded frames and one session. Accepted messages optionally receive `Pi · Sent to Pi.`. Final visible replies are sent once, unthreaded. Markdown, code, links, lists, and formatting are converted safely to bounded Telegram HTML chunks. Terminal text and validated PNG/JPEG/WebP images are mirrored in both directions. Unsupported/oversized files are rejected. Unaccepted queue entries are lost on restart by design.
+The extension registers `/telegram` and `/telegram-settings`; the latter controls footer visibility and delivery confirmations.
+Telegram commands are `/telegram_on`, `/telegram_off`, `/telegram_status`, `/token_usage`, `/agent_info`, `/change_model`, and `/change_thinking` (plus spaced forms where applicable).
+See [docs/telegram.md](docs/telegram.md) for agent-control behavior, ownership, and confirmation details.
+`/token_usage` reports concise GPT quota windows in the paired private chat.
+Text is in-memory FIFO with bounded frames and one session.
+Accepted messages optionally receive `Pi · Sent to Pi.`.
+Final visible replies are sent once, unthreaded.
+Markdown, code, links, lists, and formatting are converted safely to bounded Telegram HTML chunks.
+Terminal text and validated PNG/JPEG/WebP images are mirrored in both directions.
+Unsupported/oversized files are rejected.
+Unaccepted queue entries are lost on restart by design.
 
 Voice notes receive a review card with Send, Edit, Cancel, bounded transcripts, one active transcription, bounded pending cards, and complete temporary-file cleanup.
 
