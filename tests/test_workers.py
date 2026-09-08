@@ -275,6 +275,24 @@ def test_firstmate_paths_reject_symlinked_parent(tmp_path):
         workers_module.collect_worker_views(home)
 
 
+def test_malformed_task_rows_are_unavailable(tmp_path, monkeypatch):
+    home = firstmate_home(tmp_path)
+    (home / "state/current.meta").write_text(herdr_meta("current", "fleet", "w1:p1"))
+
+    def malformed(argv, *, timeout, env=None):
+        if argv[0] == "tasks-axi":
+            return workers_module.CommandResult(
+                "tasks[1]{id,state,kind,repo,title}:\n"
+                "  invalid id,done,ship,repo,Task\n", 0,
+            )
+        raise AssertionError("status lookup should not run")
+
+    monkeypatch.setattr(workers_module, "_capture_readonly", malformed)
+
+    with pytest.raises(workers_module.WorkersUnavailable, match="task records"):
+        workers_module.worker_messages(home)
+
+
 def test_unavailable_task_query_does_not_claim_stale_workers(tmp_path, monkeypatch):
     home = firstmate_home(tmp_path)
     (home / "state/stale.meta").write_text(herdr_meta("stale", "fleet", "w1:p1"))
