@@ -1418,6 +1418,7 @@ class MirrorBot:
             with contextlib.suppress(OSError):
                 writer.close()
             return
+        self._client_generation += 1
         self.client = writer
         self.client_features = set()
         self.client_ready = False
