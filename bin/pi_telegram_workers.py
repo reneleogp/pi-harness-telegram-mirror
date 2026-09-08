@@ -345,13 +345,13 @@ def _herdr_status(worker: ManagedWorker) -> tuple[str, str]:
                 ):
                     return "unknown", "Herdr endpoint absent"
             status = agent.get("agent_status")
-            if status in SUPPORTED_HERDR_STATUSES:
-                return str(status), ""
+            if isinstance(status, str) and status in SUPPORTED_HERDR_STATUSES:
+                return status, ""
         else:
             return "unknown", "Herdr status unavailable"
     error = payload.get("error")
     code = error.get("code") if isinstance(error, dict) else None
-    if code in {"agent_not_found", "pane_not_found"}:
+    if isinstance(code, str) and code in {"agent_not_found", "pane_not_found"}:
         return "unknown", "Herdr endpoint absent"
     return "unknown", "Herdr status unavailable"
 
@@ -370,12 +370,12 @@ def collect_worker_views(home: Path) -> list[WorkerView]:
     canonical = state.parent
     workers = _managed_workers(state)
     titles = _task_titles(backlog)
-    if titles is not None:
-        workers = [worker for worker in workers if worker.name in titles]
+    if titles is None:
+        raise WorkersUnavailable("current worker task records are unavailable")
+    workers = [worker for worker in workers if worker.name in titles]
 
     def inspect(worker: ManagedWorker) -> WorkerView:
-        description = (titles.get(worker.name, "Description unavailable")
-                       if titles is not None else "Description unavailable")
+        description = titles.get(worker.name, "Description unavailable")
         if not _metadata_is_current(worker):
             return WorkerView(
                 worker.name, description, "unknown",

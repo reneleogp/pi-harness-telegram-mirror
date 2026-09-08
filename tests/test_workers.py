@@ -4,6 +4,8 @@ import asyncio
 import importlib.util
 import os
 import sys
+
+import pytest
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
@@ -194,14 +196,18 @@ def test_absent_timeout_malformed_and_remote_endpoints_report_unknown(tmp_path, 
             '{"result":"malformed"}', 0)),
         "agent-malformed": ("w5:p1", workers_module.CommandResult(
             '{"result":{"agent":[]}}', 0)),
+        "status-malformed": ("w6:p1", workers_module.CommandResult(
+            '{"result":{"agent":{"agent_status":[]}}}', 0)),
+        "error-malformed": ("w7:p1", workers_module.CommandResult(
+            '{"error":{"code":[]}}', 0)),
     }
     for name, (pane, _result) in cases.items():
         (home / "state" / f"{name}.meta").write_text(herdr_meta(name, "fleet", pane))
     (home / "state/remote.meta").write_text(
-        herdr_meta("remote", "remote-fleet", "w6:p1", kind="secondmate", remote=True)
+        herdr_meta("remote", "remote-fleet", "w8:p1", kind="secondmate", remote=True)
     )
     (home / "state/bad.meta").write_text(
-        herdr_meta("bad", "fleet", "w7:p1") + "endpoint_task_id=someone-else\n"
+        herdr_meta("bad", "fleet", "w9:p1") + "endpoint_task_id=someone-else\n"
     )
     results = {pane: result for pane, result in cases.values()}
     runner, calls = fake_runner_for(
@@ -218,11 +224,26 @@ def test_absent_timeout_malformed_and_remote_endpoints_report_unknown(tmp_path, 
     assert views["malformed"].herdr_note == "Herdr status unavailable"
     assert views["result-malformed"].herdr_note == "Herdr status unavailable"
     assert views["agent-malformed"].herdr_note == "Herdr status unavailable"
+    assert views["status-malformed"].herdr_note == "Herdr status unavailable"
+    assert views["error-malformed"].herdr_note == "Herdr status unavailable"
     assert views["remote"].herdr_note == "remote Herdr status unavailable"
     assert views["bad"].herdr_note == "endpoint metadata unavailable"
     queried = {call[3] for call in calls if call[0] == "herdr"}
     assert queried == set(results)
-    assert "w6:p1" not in queried and "w7:p1" not in queried
+    assert "w8:p1" not in queried and "w9:p1" not in queried
+
+
+def test_unavailable_task_query_does_not_claim_stale_workers(tmp_path, monkeypatch):
+    home = firstmate_home(tmp_path)
+    (home / "state/stale.meta").write_text(herdr_meta("stale", "fleet", "w1:p1"))
+
+    def unavailable(argv, *, timeout, env=None):
+        return workers_module.CommandResult("", 127)
+
+    monkeypatch.setattr(workers_module, "_capture_readonly", unavailable)
+
+    with pytest.raises(workers_module.WorkersUnavailable, match="task records"):
+        workers_module.worker_messages(home)
 
 
 def test_reused_herdr_endpoint_is_excluded(tmp_path, monkeypatch):
