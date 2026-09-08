@@ -225,14 +225,16 @@ def test_absent_timeout_malformed_and_remote_endpoints_report_unknown(tmp_path, 
             '{"error":{"code":[]}}', 0)),
         "identity-malformed": ("w9:p1", workers_module.CommandResult(
             '{"result":{"agent":{"task_id":[]}}}', 0)),
+        "identity-empty": ("w10:p2", workers_module.CommandResult(
+            '{"result":{"agent":{"task_id":""}}}', 0)),
     }
     for name, (pane, _result) in cases.items():
         (home / "state" / f"{name}.meta").write_text(herdr_meta(name, "fleet", pane))
     (home / "state/remote.meta").write_text(
-        herdr_meta("remote", "remote-fleet", "w10:p1", kind="secondmate", remote=True)
+        herdr_meta("remote", "remote-fleet", "w11:p1", kind="secondmate", remote=True)
     )
     (home / "state/bad.meta").write_text(
-        herdr_meta("bad", "fleet", "w11:p1") + "endpoint_task_id=someone-else\n"
+        herdr_meta("bad", "fleet", "w12:p1") + "endpoint_task_id=someone-else\n"
     )
     results = {pane: result for pane, result in cases.values()}
     runner, calls = fake_runner_for(
@@ -254,11 +256,31 @@ def test_absent_timeout_malformed_and_remote_endpoints_report_unknown(tmp_path, 
     assert views["status-malformed"].herdr_note == "Herdr status unavailable"
     assert views["error-malformed"].herdr_note == "Herdr status unavailable"
     assert views["identity-malformed"].herdr_note == "Herdr status unavailable"
+    assert views["identity-empty"].herdr_note == "Herdr status unavailable"
     assert views["remote"].herdr_note == "remote Herdr status unavailable"
     assert views["bad"].herdr_note == "endpoint metadata unavailable"
     queried = {call[3] for call in calls if call[0] == "herdr"}
     assert queried == set(results)
-    assert "w10:p1" not in queried and "w11:p1" not in queried
+    assert "w11:p1" not in queried and "w12:p1" not in queried
+
+
+def test_duplicate_task_rows_are_unavailable(tmp_path, monkeypatch):
+    home = firstmate_home(tmp_path)
+    (home / "state/current.meta").write_text(herdr_meta("current", "fleet", "w1:p1"))
+
+    def duplicate(argv, *, timeout, env=None):
+        if argv[0] == "tasks-axi":
+            return workers_module.CommandResult(
+                "tasks[2]{id,state,kind,repo,title}:\n"
+                "  current,working,ship,repo,First title\n"
+                "  current,done,ship,repo,Second title\n", 0,
+            )
+        raise AssertionError("status lookup should not run")
+
+    monkeypatch.setattr(workers_module, "_capture_readonly", duplicate)
+
+    with pytest.raises(workers_module.WorkersUnavailable, match="task records"):
+        workers_module.worker_messages(home)
 
 
 def test_firstmate_paths_reject_symlinked_parent(tmp_path):

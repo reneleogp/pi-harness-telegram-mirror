@@ -290,6 +290,8 @@ def _task_titles(backlog: Path) -> Optional[dict[str, str]]:
             return None
         if len(row) != 5 or not TASK_ID_PATTERN.fullmatch(row[0]):
             return None
+        if row[0] in titles:
+            return None
         title = safe_text(row[4], FIELD_LIMIT)
         titles[row[0]] = title or "Description unavailable"
     return titles if saw_rows_header else None
@@ -357,7 +359,7 @@ def _herdr_status(worker: ManagedWorker) -> tuple[str, str]:
             for identity_key in ("task_id", "endpoint_task_id"):
                 identity = agent.get(identity_key)
                 if identity is not None:
-                    if not isinstance(identity, str):
+                    if not isinstance(identity, str) or not TASK_ID_PATTERN.fullmatch(identity):
                         return "unknown", "Herdr status unavailable"
                     if identity != worker.name:
                         return "unknown", "Herdr endpoint absent"
