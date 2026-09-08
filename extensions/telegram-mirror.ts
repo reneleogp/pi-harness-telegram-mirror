@@ -93,6 +93,7 @@ const FOOTER_KEY = "pi-telegram";
 // from anywhere reads the same to Pi.
 const IMAGE_MARKER = "[Image attached]";
 const DISPLAY_SETTING_FILE = "pi-display-status";
+const EXTENSION_PATH = fileURLToPath(import.meta.url);
 
 function positiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -423,6 +424,12 @@ export default function (pi: ExtensionAPI) {
     openSocket();
   }
 
+  function reloadCommandAvailable(): boolean {
+    return (pi.getCommands?.() ?? []).some((command) =>
+      command.name === "reload" && command.source === "extension" &&
+      command.sourceInfo.path === EXTENSION_PATH);
+  }
+
   function write(frame: Record<string, unknown>): boolean {
     const target = socket;
     if (!target || target.destroyed) return false;
@@ -535,6 +542,10 @@ export default function (pi: ExtensionAPI) {
           id: frame.id,
           text: "Pi is busy. Wait for the current response or compaction to finish, then retry.",
         });
+        return;
+      }
+      if (!reloadCommandAvailable()) {
+        write({ t: "command_result", id: frame.id, text: "Pi terminal reload is unavailable." });
         return;
       }
       write({ t: "command_result", id: frame.id, text: "Pi terminal reload requested." });

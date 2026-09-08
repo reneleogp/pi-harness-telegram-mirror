@@ -131,6 +131,13 @@ let idle = true;
 const pi = {
   on(name, handler) { handlers.set(name, handler); },
   registerCommand(name, definition) { registered.push([name, definition]); },
+  getCommands() {
+    return registered.map(([name]) => ({
+      name,
+      source: "extension",
+      sourceInfo: { path: `${process.cwd()}/extensions/telegram-mirror.ts` },
+    }));
+  },
   sendUserMessage(content, options) {
     dispatches.push([content, options]);
     const command = registered.find(([name]) => name === "reload");
@@ -156,6 +163,101 @@ if (reloads.length !== 1 || results.length !== 2 || dispatches.length !== 1 ||
     results[0].text !== "Pi terminal reload requested." ||
     results[1].text !== "Pi is busy. Wait for the current response or compaction to finish, then retry.") {
   throw new Error(JSON.stringify({ reloads, results, dispatches }));
+}
+'''
+    result = subprocess.run(
+        ["node", "--experimental-strip-types", "--input-type=module", "-"],
+        cwd=runtime_root, input=script, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_reload_command_collision_cannot_submit_model_input(tmp_path):
+    runtime_root = tmp_path / "runtime"
+    shutil.copytree(ROOT / "extensions", runtime_root / "extensions")
+    (runtime_root / "bin").mkdir()
+    shutil.copy2(ROOT / "bin" / "pi-telegram-owner.py", runtime_root / "bin")
+    modules = runtime_root / "node_modules" / "@earendil-works"
+    modules.mkdir(parents=True)
+    (modules / "pi-ai").mkdir()
+    (modules / "pi-ai" / "package.json").write_text('{"type":"module"}')
+    (modules / "pi-ai" / "index.js").write_text(
+        "export function getSupportedThinkingLevels() { return []; }\n"
+    )
+    (modules / "pi-coding-agent").mkdir()
+    (modules / "pi-coding-agent" / "package.json").write_text('{"type":"module"}')
+    (modules / "pi-coding-agent" / "index.js").write_text(
+        "export function getSettingsListTheme() { return {}; }\n"
+    )
+    (modules / "pi-tui").mkdir()
+    (modules / "pi-tui" / "package.json").write_text('{"type":"module"}')
+    (modules / "pi-tui" / "index.js").write_text(
+        "export class Container {}\n"
+        "export class SettingsList {}\n"
+        "export class Text {}\n"
+    )
+    script = r'''
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createServer } from "node:net";
+import extension from "./extensions/telegram-mirror.ts";
+
+const root = mkdtempSync(join(tmpdir(), "pi-telegram-collision-root-"));
+const home = mkdtempSync(join(tmpdir(), "pi-telegram-collision-home-"));
+process.env.PI_TELEGRAM_DIR = home;
+const config = join(home, "config.json");
+writeFileSync(config, JSON.stringify({ allowed_roots: [root], pi_executable: "node" }) + "\n");
+chmodSync(config, 0o600);
+const socketPath = join(home, "bot.sock");
+const results = [];
+const prompts = [];
+const handlers = new Map();
+const registered = [["reload", { description: "Another extension" }]];
+const server = createServer((socket) => {
+  socket.on("data", (chunk) => {
+    for (const line of chunk.toString().split("\n")) {
+      if (!line) continue;
+      const frame = JSON.parse(line);
+      if (frame.t === "hello") {
+        socket.write(JSON.stringify({ t: "command", id: 1, command: "reload" }) + "\n");
+      } else if (frame.t === "command_result") {
+        results.push(frame);
+      }
+    }
+  });
+});
+await new Promise((resolve, reject) => {
+  server.once("error", reject);
+  server.listen(socketPath, resolve);
+});
+const pi = {
+  on(name, handler) { handlers.set(name, handler); },
+  registerCommand(name, definition) { registered.push([`${name}:1`, definition]); },
+  getCommands() {
+    return registered.map(([name], index) => ({
+      name,
+      source: "extension",
+      sourceInfo: { path: index === 0 ? "/other/reload.ts" : `${process.cwd()}/extensions/telegram-mirror.ts` },
+    }));
+  },
+  sendUserMessage: () => { prompts.push(true); },
+};
+const ctx = {
+  cwd: root,
+  isIdle: () => true,
+  reload: async () => { throw new Error("must not reload"); },
+  ui: { theme: { fg: (_color, text) => text }, setStatus() {}, notify() {} },
+};
+extension(pi);
+await handlers.get("session_start")({}, ctx);
+for (let attempt = 0; attempt < 50 && results.length === 0; attempt++) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+}
+await handlers.get("session_shutdown")({}, ctx);
+await new Promise((resolve) => server.close(resolve));
+if (prompts.length !== 0 || results.length !== 1 || results[0].text !== "Pi terminal reload is unavailable.") {
+  throw new Error(JSON.stringify({ prompts, results }));
 }
 '''
     result = subprocess.run(
