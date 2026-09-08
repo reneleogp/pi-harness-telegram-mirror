@@ -70,13 +70,23 @@ def test_reload_command_uses_authenticated_socket_and_literal_pi_reload(tmp_path
     shutil.copy2(ROOT / "bin" / "pi-telegram-owner.py", runtime_root / "bin")
     modules = runtime_root / "node_modules" / "@earendil-works"
     modules.mkdir(parents=True)
-    installed = Path("/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works")
-    (modules / "pi-coding-agent").symlink_to(
-        Path("/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent"),
-        target_is_directory=True,
+    (modules / "pi-ai").mkdir()
+    (modules / "pi-ai" / "package.json").write_text('{"type":"module"}')
+    (modules / "pi-ai" / "index.js").write_text(
+        "export function getSupportedThinkingLevels() { return []; }\n"
     )
-    for name in ("pi-ai", "pi-tui"):
-        (modules / name).symlink_to(installed / name, target_is_directory=True)
+    (modules / "pi-coding-agent").mkdir()
+    (modules / "pi-coding-agent" / "package.json").write_text('{"type":"module"}')
+    (modules / "pi-coding-agent" / "index.js").write_text(
+        "export function getSettingsListTheme() { return {}; }\n"
+    )
+    (modules / "pi-tui").mkdir()
+    (modules / "pi-tui" / "package.json").write_text('{"type":"module"}')
+    (modules / "pi-tui" / "index.js").write_text(
+        "export class Container {}\n"
+        "export class SettingsList {}\n"
+        "export class Text {}\n"
+    )
 
     script = r'''
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -109,7 +119,7 @@ await new Promise((resolve, reject) => {
 const pi = {
   on(name, handler) { handlers.set(name, handler); },
   registerCommand(name, definition) { registered.push([name, definition]); },
-  sendUserMessage: async (...args) => { sent.push(args); },
+  sendUserMessage: (...args) => { sent.push(args); },
 };
 const ctx = {
   cwd: root,
@@ -122,8 +132,9 @@ for (let attempt = 0; attempt < 50 && sent.length === 0; attempt++) {
 }
 await handlers.get("session_shutdown")({}, ctx);
 await new Promise((resolve) => server.close(resolve));
-const reload = registered.find(([name]) => name === "reload");
-if (!reload) throw new Error("reload command was not registered for the owner");
+if (registered.some(([name]) => name === "reload")) {
+  throw new Error("the extension replaced Pi's native reload command");
+}
 if (sent.length !== 1 || sent[0][0] !== "/reload" || sent[0][1]?.expandPromptTemplates !== true) {
   throw new Error(JSON.stringify(sent));
 }

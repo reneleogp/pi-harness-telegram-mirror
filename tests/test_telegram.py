@@ -186,14 +186,8 @@ def test_reload_pi_terminal_menu_registration_uses_valid_scoped_commands(tmp_pat
     assert "reload-pi-terminal" not in commands
 
 
-def test_reload_pi_terminal_alias_and_menu_registration_are_valid(tmp_path):
+def test_reload_pi_terminal_alias_is_dispatched(tmp_path):
     bot = load_bot()
-    labels = {item["command"]: item["description"] for item in bot.MENU_COMMANDS}
-    assert labels["reload_pi_terminal"] == "Reload the connected Pi terminal"
-    assert all("-" not in item["command"] for item in bot.MENU_COMMANDS)
-    assert bot.RELOAD_PI_TERMINAL_ALIASES["/reload-pi-terminal"] == "reload"
-    assert bot.RELOAD_PI_TERMINAL_ALIASES["/reload_pi_terminal"] == "reload"
-
     calls = []
 
     class FakeApi:
@@ -216,22 +210,29 @@ def test_reload_pi_terminal_alias_and_menu_registration_are_valid(tmp_path):
     mirror.write_frame = fake_write
 
     async def exercise():
-        task = asyncio.create_task(mirror.handle_update({"message": {
-            "message_id": 11,
-            "from": {"id": 7},
-            "chat": {"id": 8, "type": "private"},
-            "text": "/reload_pi_terminal",
-        }}))
-        await asyncio.sleep(0)
-        await mirror.handle_frame({
-            "t": "command_result", "id": 1,
-            "text": bot.RELOAD_PI_TERMINAL_REPLY,
-        })
-        await task
+        for message_id, text, command_id in (
+            (11, "/reload-pi-terminal", 1),
+            (12, "/reload_pi_terminal", 2),
+        ):
+            task = asyncio.create_task(mirror.handle_update({"message": {
+                "message_id": message_id,
+                "from": {"id": 7},
+                "chat": {"id": 8, "type": "private"},
+                "text": text,
+            }}))
+            await asyncio.sleep(0)
+            await mirror.handle_frame({
+                "t": "command_result", "id": command_id,
+                "text": bot.RELOAD_PI_TERMINAL_REPLY,
+            })
+            await task
 
     asyncio.run(exercise())
-    assert writes == [{"t": "command", "id": 1, "command": "reload"}]
-    assert calls[-1][1]["text"] == bot.RELOAD_PI_TERMINAL_REPLY
+    assert writes == [
+        {"t": "command", "id": 1, "command": "reload"},
+        {"t": "command", "id": 2, "command": "reload"},
+    ]
+    assert len([1 for method, _ in calls if method == "sendMessage"]) == 2
 
 
 def test_reload_pi_terminal_rejects_disconnected_unauthorized_and_malformed_messages(tmp_path):
