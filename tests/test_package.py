@@ -63,7 +63,7 @@ if (calls.length !== 1 || calls[0][0] !== "success" || calls[0][1] !== "✓") th
     assert result.returncode == 0, result.stderr
 
 
-def test_reload_command_uses_authenticated_socket_and_literal_pi_reload(tmp_path):
+def test_reload_command_uses_authenticated_socket_and_native_reload(tmp_path):
     runtime_root = tmp_path / "runtime"
     shutil.copytree(ROOT / "extensions", runtime_root / "extensions")
     (runtime_root / "bin").mkdir()
@@ -102,13 +102,23 @@ const config = join(home, "config.json");
 writeFileSync(config, JSON.stringify({ allowed_roots: [root], pi_executable: "node" }) + "\n");
 chmodSync(config, 0o600);
 const socketPath = join(home, "bot.sock");
-const sent = [];
+const reloads = [];
+const results = [];
 const handlers = new Map();
 const registered = [];
 const server = createServer((socket) => {
   socket.on("data", (chunk) => {
-    if (chunk.toString().includes('"t":"hello"')) {
-      socket.write(JSON.stringify({ t: "command", id: 1, command: "reload" }) + "\n");
+    for (const line of chunk.toString().split("\n")) {
+      if (!line) continue;
+      const frame = JSON.parse(line);
+      if (frame.t === "hello") {
+        socket.write(JSON.stringify({ t: "command", id: 1, command: "reload" }) + "\n");
+      } else if (frame.t === "command_result") {
+        results.push(frame);
+        if (frame.id === 1) {
+          socket.write(JSON.stringify({ t: "command", id: 2, command: "reload" }) + "\n");
+        }
+      }
     }
   });
 });
@@ -116,18 +126,20 @@ await new Promise((resolve, reject) => {
   server.once("error", reject);
   server.listen(socketPath, resolve);
 });
+let idle = true;
 const pi = {
   on(name, handler) { handlers.set(name, handler); },
   registerCommand(name, definition) { registered.push([name, definition]); },
-  sendUserMessage: (...args) => { sent.push(args); },
 };
 const ctx = {
   cwd: root,
+  isIdle: () => idle,
+  reload: async () => { reloads.push(true); idle = false; },
   ui: { theme: { fg: (_color, text) => text }, setStatus() {}, notify() {} },
 };
 extension(pi);
 await handlers.get("session_start")({}, ctx);
-for (let attempt = 0; attempt < 50 && sent.length === 0; attempt++) {
+for (let attempt = 0; attempt < 50 && results.length < 2; attempt++) {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 await handlers.get("session_shutdown")({}, ctx);
@@ -135,8 +147,10 @@ await new Promise((resolve) => server.close(resolve));
 if (registered.some(([name]) => name === "reload")) {
   throw new Error("the extension replaced Pi's native reload command");
 }
-if (sent.length !== 1 || sent[0][0] !== "/reload" || sent[0][1]?.expandPromptTemplates !== true) {
-  throw new Error(JSON.stringify(sent));
+if (reloads.length !== 1 || results.length !== 2 ||
+    results[0].text !== "Pi terminal reload requested." ||
+    results[1].text !== "Pi is busy. Wait for the current response or compaction to finish, then retry.") {
+  throw new Error(JSON.stringify({ reloads, results }));
 }
 '''
     result = subprocess.run(

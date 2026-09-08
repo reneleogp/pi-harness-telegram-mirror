@@ -216,6 +216,9 @@ IMAGE_UNSUPPORTED_SESSION_REPLY = (
 )
 RELOAD_PI_TERMINAL_COMMAND = "reload"
 RELOAD_PI_TERMINAL_REPLY = "Pi terminal reload requested."
+RELOAD_PI_TERMINAL_BUSY = (
+    "Pi is busy. Wait for the current response or compaction to finish, then retry."
+)
 RELOAD_PI_TERMINAL_UNAVAILABLE = (
     "Pi terminal is not connected. Start the paired Pi terminal, then retry "
     "/reload-pi-terminal."
@@ -829,7 +832,13 @@ class MirrorBot:
                     while len(self.reload_message_ids) > MAX_RELOAD_MESSAGE_IDS:
                         self.reload_message_ids.popitem(last=False)
                 accepted = await self.request_pi_result(RELOAD_PI_TERMINAL_COMMAND)
-                if accepted.get("text") != RELOAD_PI_TERMINAL_REPLY:
+                result_text = accepted.get("text")
+                if result_text == RELOAD_PI_TERMINAL_BUSY:
+                    if isinstance(message_id, int):
+                        self.reload_message_ids.pop(message_id, None)
+                    await self.send(result_text, reply_to=message_id)
+                    return
+                if result_text != RELOAD_PI_TERMINAL_REPLY:
                     if isinstance(message_id, int):
                         self.reload_message_ids.pop(message_id, None)
                     await self.send(RELOAD_PI_TERMINAL_UNAVAILABLE, reply_to=message_id)

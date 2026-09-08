@@ -528,10 +528,21 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     if (frame.t === "command" && frame.command === "reload" && typeof frame.id === "number") {
-      // Acknowledge on the authenticated socket before Pi tears this session
-      // down. The literal /reload goes through Pi's supported command path.
+      const ctx = activeCtx;
+      if (!ctx || !ctx.isIdle()) {
+        write({
+          t: "command_result",
+          id: frame.id,
+          text: "Pi is busy. Wait for the current response or compaction to finish, then retry.",
+        });
+        return;
+      }
+      // Acknowledge on the authenticated socket before Pi tears this session down.
       write({ t: "command_result", id: frame.id, text: "Pi terminal reload requested." });
-      pi.sendUserMessage("/reload", { expandPromptTemplates: true });
+      void ctx.reload().catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(`pi-telegram-mirror: could not reload Pi: ${detail}`);
+      });
       return;
     }
     if (frame.t === "command" && frame.command === "token_usage" && typeof frame.id === "number") {
