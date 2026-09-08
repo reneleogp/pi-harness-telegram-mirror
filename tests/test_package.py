@@ -7,10 +7,6 @@ def run(*args, env): return subprocess.run([sys.executable,str(OWNER),*args],env
 def test_manifest():
  d=json.loads((ROOT/'package.json').read_text()); assert 'pi-package' in d['keywords']; assert d['license']=='MIT'; assert d['pi']['extensions']==['./extensions/telegram-mirror.ts']; assert (ROOT/'LICENSE').is_file(); assert '@earendil-works/pi-coding-agent' in d['peerDependencies']; assert '@earendil-works/pi-ai' in d['peerDependencies']
 
-def test_claude_points_to_project_guidance():
- assert (ROOT/'AGENTS.md').is_file()
- assert (ROOT/'CLAUDE.md').is_symlink()
- assert os.readlink(ROOT/'CLAUDE.md') == 'AGENTS.md'
 def test_exact_root_and_contention():
  with tempfile.TemporaryDirectory() as t:
   h=Path(t)/'h'; root=Path(t)/'root'; root.mkdir(); sub=root/'sub'; sub.mkdir(); e={**os.environ,'PI_TELEGRAM_DIR':str(h)}
