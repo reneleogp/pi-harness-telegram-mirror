@@ -104,6 +104,7 @@ chmodSync(config, 0o600);
 const socketPath = join(home, "bot.sock");
 const reloads = [];
 const results = [];
+const dispatches = [];
 const handlers = new Map();
 const registered = [];
 const server = createServer((socket) => {
@@ -130,6 +131,12 @@ let idle = true;
 const pi = {
   on(name, handler) { handlers.set(name, handler); },
   registerCommand(name, definition) { registered.push([name, definition]); },
+  sendUserMessage(content, options) {
+    dispatches.push([content, options]);
+    const command = registered.find(([name]) => name === "reload");
+    if (!command) throw new Error("reload command was not registered");
+    Promise.resolve(command[1].handler("", ctx)).catch((error) => { throw error; });
+  },
 };
 const ctx = {
   cwd: root,
@@ -144,13 +151,11 @@ for (let attempt = 0; attempt < 50 && results.length < 2; attempt++) {
 }
 await handlers.get("session_shutdown")({}, ctx);
 await new Promise((resolve) => server.close(resolve));
-if (registered.some(([name]) => name === "reload")) {
-  throw new Error("the extension replaced Pi's native reload command");
-}
-if (reloads.length !== 1 || results.length !== 2 ||
+if (reloads.length !== 1 || results.length !== 2 || dispatches.length !== 1 ||
+    dispatches[0][0] !== "/reload" || dispatches[0][1]?.expandPromptTemplates !== true ||
     results[0].text !== "Pi terminal reload requested." ||
     results[1].text !== "Pi is busy. Wait for the current response or compaction to finish, then retry.") {
-  throw new Error(JSON.stringify({ reloads, results }));
+  throw new Error(JSON.stringify({ reloads, results, dispatches }));
 }
 '''
     result = subprocess.run(

@@ -537,12 +537,8 @@ export default function (pi: ExtensionAPI) {
         });
         return;
       }
-      // Acknowledge on the authenticated socket before Pi tears this session down.
       write({ t: "command_result", id: frame.id, text: "Pi terminal reload requested." });
-      void ctx.reload().catch((error: unknown) => {
-        const detail = error instanceof Error ? error.message : String(error);
-        console.error(`pi-telegram-mirror: could not reload Pi: ${detail}`);
-      });
+      pi.sendUserMessage("/reload", { expandPromptTemplates: true });
       return;
     }
     if (frame.t === "command" && frame.command === "token_usage" && typeof frame.id === "number") {
@@ -703,6 +699,13 @@ export default function (pi: ExtensionAPI) {
   function registerCommands(): void {
     if (commandsRegistered) return;
     commandsRegistered = true;
+
+    pi.registerCommand?.("reload", {
+      description: "Reload Pi extensions and resources.",
+      handler: async (_args, ctx) => {
+        if (ctx.isIdle()) await ctx.reload();
+      },
+    });
 
     pi.registerCommand?.("telegram", {
       description: "Toggle the Telegram terminal mirror.",
