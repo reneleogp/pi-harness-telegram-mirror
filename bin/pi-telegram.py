@@ -503,10 +503,17 @@ class TelegramApi:
                         raise TelegramError(f"{method} cancelled before dispatch")
                     response_context = urllib.request.urlopen(request, timeout=timeout)
                 else:
-                    with dispatch_lock:
+                    acquired = dispatch_lock.acquire(blocking=False)
+                    if not acquired:
                         if not before_request():
                             raise TelegramError(f"{method} cancelled before dispatch")
-                        response_context = urllib.request.urlopen(request, timeout=timeout)
+                    else:
+                        try:
+                            if not before_request():
+                                raise TelegramError(f"{method} cancelled before dispatch")
+                        finally:
+                            dispatch_lock.release()
+                    response_context = urllib.request.urlopen(request, timeout=timeout)
             else:
                 response_context = urllib.request.urlopen(request, timeout=timeout)
             with response_context as response:
@@ -628,10 +635,10 @@ class MirrorBot:
         return f"m{self._sequence}"
 
     def signal_client_change(self) -> None:
-        with self._workers_dispatch_lock:
-            if self._client_change_event is not None:
-                self._client_change_event.set()
-            self._client_change_event = asyncio.Event()
+        if self._client_change_event is not None:
+            self._client_change_event.set()
+        self._client_generation += 1
+        self._client_change_event = asyncio.Event()
 
     async def mirror_terminal(self, text: str, images: Any = None) -> None:
         """Show a terminal submission in Telegram, images included."""
@@ -1482,7 +1489,6 @@ class MirrorBot:
             return
         self.signal_client_change()
         self.client = writer
-        self._client_generation += 1
         self.client_features = set()
         self.client_ready = False
         self.session_root = peer_session_root(writer)
