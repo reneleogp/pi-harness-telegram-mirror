@@ -591,6 +591,7 @@ class MirrorBot:
     _stopping: bool = False
     _command_sequence: int = 0
     _client_generation: int = 0
+    _client_change_event: Optional[asyncio.Event] = None
     command_waiters: dict[int, tuple[int, asyncio.Future[dict[str, Any]]]] = field(default_factory=dict)
     control_menus: "OrderedDict[str, ControlMenu]" = field(default_factory=OrderedDict)
     # The exact root authorized for the currently connected Pi peer.
@@ -605,6 +606,11 @@ class MirrorBot:
     def next_id(self) -> str:
         self._sequence += 1
         return f"m{self._sequence}"
+
+    def signal_client_change(self) -> None:
+        if self._client_change_event is not None:
+            self._client_change_event.set()
+        self._client_change_event = asyncio.Event()
 
     async def mirror_terminal(self, text: str, images: Any = None) -> None:
         """Show a terminal submission in Telegram, images included."""
@@ -886,11 +892,28 @@ class MirrorBot:
         if (generation != self._client_generation or self.session_root != root
                 or not self.connected or not self.client_ready):
             return
+        change_event = self._client_change_event
+        if change_event is None:
+            self._client_change_event = asyncio.Event()
+            change_event = self._client_change_event
         for message in messages:
             if (generation != self._client_generation or self.session_root != root
                     or not self.connected or not self.client_ready):
                 return
-            await self.send(message, reply_to=reply_to)
+            send_task = asyncio.create_task(self.send(message, reply_to=reply_to))
+            change_task = asyncio.create_task(change_event.wait())
+            done, _ = await asyncio.wait(
+                (send_task, change_task), return_when=asyncio.FIRST_COMPLETED,
+            )
+            if change_task in done:
+                send_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await send_task
+                return
+            change_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await change_task
+            await send_task
 
     async def request_pi_result(self, command: str, **values: str) -> dict[str, Any]:
         if not self.connected or not self.client_ready:
@@ -1366,6 +1389,7 @@ class MirrorBot:
         if self.client is not writer:
             return
         generation = self._client_generation
+        self.signal_client_change()
         self.client = None
         self.client_features = set()
         self.client_ready = False
@@ -1404,6 +1428,7 @@ class MirrorBot:
             with contextlib.suppress(OSError):
                 writer.close()
             return
+        self.signal_client_change()
         self.client = writer
         self._client_generation += 1
         self.client_features = set()

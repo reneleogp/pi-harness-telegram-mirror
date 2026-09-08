@@ -527,6 +527,41 @@ def test_workers_result_is_discarded_after_session_changes(tmp_path, monkeypatch
     assert not [params for method, params in calls if method == "sendMessage"]
 
 
+def test_workers_transport_cancels_on_session_change(tmp_path, monkeypatch):
+    bot = load_path("pi_telegram_workers_transport_race_bot", BOT)
+    started = threading.Event()
+    release = threading.Event()
+    completed = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            started.set()
+            await asyncio.to_thread(release.wait, 2)
+            completed.append((method, params))
+            return {"message_id": len(completed)}
+
+    monkeypatch.setattr(bot, "worker_messages", lambda _home: ["old session workers"])
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.client_ready = True
+    mirror.session_root = tmp_path
+    mirror._client_generation = 1
+
+    async def run_race():
+        task = asyncio.create_task(mirror.send_workers(reply_to=4))
+        assert await asyncio.to_thread(started.wait, 2)
+        mirror._client_generation = 2
+        mirror.session_root = tmp_path / "new-session"
+        mirror.signal_client_change()
+        await task
+        release.set()
+
+    asyncio.run(run_race())
+    assert not completed
+
+
 def test_workers_command_uses_safe_transport_menu_and_multiple_messages(tmp_path, monkeypatch):
     bot = load_path("pi_telegram_workers_bot_messages", BOT)
     calls = []
