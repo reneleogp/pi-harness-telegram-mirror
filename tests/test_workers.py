@@ -165,6 +165,22 @@ def test_live_done_worker_keeps_description_without_showing_unrelated_done_task(
     assert task_calls == [("tasks-axi", "list", "--file", str(home / "data/backlog.md"))]
 
 
+def test_unsafe_state_records_are_not_listed(tmp_path, monkeypatch):
+    home = firstmate_home(tmp_path)
+    target = tmp_path / "outside.meta"
+    target.write_text(herdr_meta("symlinked", "fleet", "w1:p1"))
+    (home / "state/symlinked.meta").symlink_to(target)
+    (home / "state/directory.meta").mkdir()
+    (home / "state/unreadable.meta").write_bytes(b"\xff")
+    runner, _ = fake_runner_for(
+        {"symlinked": "Symlinked", "directory": "Directory", "unreadable": "Unreadable"},
+        {},
+    )
+    monkeypatch.setattr(workers_module, "_capture_readonly", runner)
+
+    assert workers_module.worker_messages(home) == ["No Firstmate-managed workers."]
+
+
 def test_empty_fleet_and_non_herdr_task_are_honest(tmp_path, monkeypatch):
     home = firstmate_home(tmp_path)
     runner, _ = fake_runner_for({}, {})

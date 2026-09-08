@@ -255,7 +255,12 @@ def _managed_workers(state: Path) -> list[ManagedWorker]:
         paths = sorted(state.glob("*.meta"), key=lambda item: item.name)
     except OSError as exc:
         raise WorkersUnavailable("Firstmate worker records are unavailable") from exc
-    return [_worker_from_meta(path) for path in paths]
+    workers: list[ManagedWorker] = []
+    for path in paths:
+        if not _regular_owned_file(path) or _read_metadata(path) is None:
+            continue
+        workers.append(_worker_from_meta(path))
+    return workers
 
 
 def _task_titles(backlog: Path) -> Optional[dict[str, str]]:
