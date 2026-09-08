@@ -104,7 +104,7 @@ In Telegram, these switch it and are never sent to Pi as conversation text:
 - `/agent_info` - show the connected owning Pi session's model, provider, effective thinking level, and context usage versus capacity.
 - `/change_model` - choose an available model for that live session.
 - `/change_thinking` - choose one of the current model's supported thinking levels.
-- `/workers` - list the current connected Firstmate home's managed direct reports.
+- `/workers` - show a labeled read-only snapshot of the connected Firstmate home's managed direct reports.
 
 The three agent controls are handled directly by the bot and extension and never become conversation input.
 They apply only to the Pi session that owns the mirror, never worker or other Pi sessions, and never change Pi's saved startup defaults.
@@ -119,10 +119,12 @@ The response is headed `GPT quota` and contains one compact line per available w
 Unavailable quota is reported concisely, and no empty rows are shown for other providers.
 
 `/workers` is an optional on-demand read-only integration.
-It uses only the exact Firstmate home authorized for the currently connected Pi session, and lists that home's direct task metadata records rather than scanning Herdr or child homes.
+It captures the exact Firstmate home authorized for the connected Pi session when the command is accepted, and lists that home's direct task metadata records rather than scanning Herdr or child homes.
+The response is labeled with a sanitized snapshot identity, so it remains clear which home it represents if the Pi session changes before the read completes.
 Each entry shows the recorded task title, the actual lifecycle value read from the task's exact recorded Herdr session and pane, and separately labeled current progress from Firstmate's reconciled `fm-crew-state.sh` helper.
 This distinction matters because an idle Herdr agent can still have unfinished work, while task progress can be blocked, awaiting approval, validating, or done.
-A non-Herdr worker reports Herdr as unknown with the reason `Not running in Herdr`, and missing tools, malformed records, absent endpoints, timeouts, and disconnected or non-Firstmate sessions produce concise unavailable or unknown results without changing other bot behavior.
+A non-Herdr worker reports Herdr as unknown with the reason `Not running in Herdr`, and missing tools, malformed records, absent endpoints, and timeouts produce concise unavailable or unknown results without changing other bot behavior.
+If no authorized Firstmate home is connected when the command is accepted, the bot reports that the worker view is unavailable.
 Persistent secondmates appear only as this home's direct-report identity; `/workers` never reconstructs their child fleet.
 Long fleets are split across bounded Telegram messages without dropping entries.
 
