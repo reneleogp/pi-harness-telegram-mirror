@@ -489,8 +489,7 @@ class TelegramApi:
         return await asyncio.to_thread(self._multipart_sync, method, fields, files, timeout)
 
     def request_sync(self, method: str, params: dict[str, Any], timeout: float = 30,
-                     before_request: Optional[Callable[[], bool]] = None,
-                     dispatch_lock: Optional[Any] = None) -> Any:
+                     before_request: Optional[Callable[[], bool]] = None) -> Any:
         url = f"{self._base}/bot{self._token}/{method}"
         body = json.dumps(params).encode("utf-8")
         request = urllib.request.Request(
@@ -498,15 +497,9 @@ class TelegramApi:
         )
         try:
             if before_request is not None:
-                if dispatch_lock is None:
-                    if not before_request():
-                        raise TelegramError(f"{method} cancelled before dispatch")
-                    response_context = urllib.request.urlopen(request, timeout=timeout)
-                else:
-                    with dispatch_lock:
-                        if not before_request():
-                            raise TelegramError(f"{method} cancelled before dispatch")
-                        response_context = urllib.request.urlopen(request, timeout=timeout)
+                if not before_request():
+                    raise TelegramError(f"{method} cancelled before dispatch")
+                response_context = urllib.request.urlopen(request, timeout=timeout)
             else:
                 response_context = urllib.request.urlopen(request, timeout=timeout)
             with response_context as response:
@@ -527,11 +520,9 @@ class TelegramApi:
 
     async def call(self, method: str, params: Optional[dict[str, Any]] = None,
                    timeout: float = 30,
-                   before_request: Optional[Callable[[], bool]] = None,
-                   dispatch_lock: Optional[Any] = None) -> Any:
+                   before_request: Optional[Callable[[], bool]] = None) -> Any:
         return await asyncio.to_thread(
-            self.request_sync, method, params or {}, timeout,
-            before_request, dispatch_lock,
+            self.request_sync, method, params or {}, timeout, before_request,
         )
 
     def _download(self, file_path: str, target: Path, timeout: float) -> None:
@@ -611,7 +602,6 @@ class MirrorBot:
     _command_sequence: int = 0
     _client_generation: int = 0
     _client_change_event: Optional[asyncio.Event] = None
-    _workers_dispatch_lock: Any = field(default_factory=threading.Lock)
     command_waiters: dict[int, tuple[int, asyncio.Future[dict[str, Any]]]] = field(default_factory=dict)
     control_menus: "OrderedDict[str, ControlMenu]" = field(default_factory=OrderedDict)
     # The exact root authorized for the currently connected Pi peer.
@@ -627,11 +617,9 @@ class MirrorBot:
         self._sequence += 1
         return f"m{self._sequence}"
 
-    async def signal_client_change(self) -> None:
+    def signal_client_change(self) -> None:
         if self._client_change_event is not None:
             self._client_change_event.set()
-        await asyncio.to_thread(self._workers_dispatch_lock.acquire)
-        self._workers_dispatch_lock.release()
         self._client_generation += 1
         self._client_change_event = asyncio.Event()
 
@@ -691,8 +679,7 @@ class MirrorBot:
     async def send(self, text: str, reply_to: Optional[int] = None,
                    markup: Optional[dict[str, Any]] = None,
                    formatted: bool = False,
-                   transport_guard: Optional[Callable[[], bool]] = None,
-                   transport_lock: Optional[Any] = None) -> Optional[dict[str, Any]]:
+                   transport_guard: Optional[Callable[[], bool]] = None) -> Optional[dict[str, Any]]:
         result: Optional[dict[str, Any]] = None
         chunks = (split_markdown(text) if formatted else
                   [(chunk, False, chunk) for chunk in chunk_text(text)])
@@ -716,7 +703,6 @@ class MirrorBot:
                 else:
                     result = await self.api.call(
                         "sendMessage", params, before_request=transport_guard,
-                        dispatch_lock=transport_lock,
                     )
             except TelegramError as exc:
                 if "parse_mode" not in params or not rejected_formatting(exc):
@@ -733,7 +719,6 @@ class MirrorBot:
                     else:
                         result = await self.api.call(
                             "sendMessage", params, before_request=transport_guard,
-                            dispatch_lock=transport_lock,
                         )
                 except TelegramError as plain_exc:
                     log(str(plain_exc))
@@ -925,7 +910,6 @@ class MirrorBot:
             await self.send(
                 f"Workers unavailable: {exc}.", reply_to=reply_to,
                 transport_guard=transport_guard,
-                transport_lock=self._workers_dispatch_lock,
             )
             return
         except Exception as exc:
@@ -936,7 +920,6 @@ class MirrorBot:
             await self.send(
                 "Workers unavailable: status could not be read.",
                 reply_to=reply_to, transport_guard=transport_guard,
-                transport_lock=self._workers_dispatch_lock,
             )
             return
         if (generation != self._client_generation or self.session_root != root
@@ -952,8 +935,7 @@ class MirrorBot:
                 return
             send_task = asyncio.create_task(
                 self.send(message, reply_to=reply_to,
-                          transport_guard=transport_guard,
-                          transport_lock=self._workers_dispatch_lock)
+                          transport_guard=transport_guard)
             )
             change_task = asyncio.create_task(change_event.wait())
             done, _ = await asyncio.wait(
@@ -1443,7 +1425,7 @@ class MirrorBot:
         if self.client is not writer:
             return
         generation = self._client_generation
-        await self.signal_client_change()
+        self.signal_client_change()
         self.client = None
         self.client_features = set()
         self.client_ready = False
@@ -1482,7 +1464,7 @@ class MirrorBot:
             with contextlib.suppress(OSError):
                 writer.close()
             return
-        await self.signal_client_change()
+        self.signal_client_change()
         self.client = writer
         self.client_features = set()
         self.client_ready = False

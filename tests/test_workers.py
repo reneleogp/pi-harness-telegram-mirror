@@ -554,7 +554,7 @@ def test_workers_transport_cancels_on_session_change(tmp_path, monkeypatch):
         assert await asyncio.to_thread(started.wait, 2)
         mirror._client_generation = 2
         mirror.session_root = tmp_path / "new-session"
-        await mirror.signal_client_change()
+        mirror.signal_client_change()
         await task
         release.set()
 
