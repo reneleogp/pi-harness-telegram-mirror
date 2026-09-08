@@ -503,17 +503,10 @@ class TelegramApi:
                         raise TelegramError(f"{method} cancelled before dispatch")
                     response_context = urllib.request.urlopen(request, timeout=timeout)
                 else:
-                    acquired = dispatch_lock.acquire(blocking=False)
-                    if not acquired:
+                    with dispatch_lock:
                         if not before_request():
                             raise TelegramError(f"{method} cancelled before dispatch")
-                    else:
-                        try:
-                            if not before_request():
-                                raise TelegramError(f"{method} cancelled before dispatch")
-                        finally:
-                            dispatch_lock.release()
-                    response_context = urllib.request.urlopen(request, timeout=timeout)
+                        response_context = urllib.request.urlopen(request, timeout=timeout)
             else:
                 response_context = urllib.request.urlopen(request, timeout=timeout)
             with response_context as response:
@@ -634,9 +627,11 @@ class MirrorBot:
         self._sequence += 1
         return f"m{self._sequence}"
 
-    def signal_client_change(self) -> None:
+    async def signal_client_change(self) -> None:
         if self._client_change_event is not None:
             self._client_change_event.set()
+        await asyncio.to_thread(self._workers_dispatch_lock.acquire)
+        self._workers_dispatch_lock.release()
         self._client_generation += 1
         self._client_change_event = asyncio.Event()
 
@@ -1448,7 +1443,7 @@ class MirrorBot:
         if self.client is not writer:
             return
         generation = self._client_generation
-        self.signal_client_change()
+        await self.signal_client_change()
         self.client = None
         self.client_features = set()
         self.client_ready = False
@@ -1487,7 +1482,7 @@ class MirrorBot:
             with contextlib.suppress(OSError):
                 writer.close()
             return
-        self.signal_client_change()
+        await self.signal_client_change()
         self.client = writer
         self.client_features = set()
         self.client_ready = False
