@@ -534,7 +534,7 @@ def test_workers_transport_cancels_on_session_change(tmp_path, monkeypatch):
     completed = []
 
     class FakeApi:
-        async def call(self, method, params=None, timeout=30):
+        async def call(self, method, params=None, timeout=30, **kwargs):
             started.set()
             await asyncio.to_thread(release.wait, 2)
             completed.append((method, params))
@@ -567,7 +567,7 @@ def test_workers_command_uses_safe_transport_menu_and_multiple_messages(tmp_path
     calls = []
 
     class FakeApi:
-        async def call(self, method, params=None, timeout=30):
+        async def call(self, method, params=None, timeout=30, **kwargs):
             calls.append((method, params))
             return {"message_id": len(calls)}
 
