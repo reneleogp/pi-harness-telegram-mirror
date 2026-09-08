@@ -135,6 +135,9 @@ def test_live_done_worker_keeps_description_without_showing_unrelated_done_task(
     (home / "state/retired-worker.meta").write_text(
         herdr_meta("retired-worker", "fleet", "w2:p1")
     )
+    (home / "state/empty-worker.meta").write_text(
+        herdr_meta("empty-worker", "fleet", "w3:p1")
+    )
     calls = []
 
     def run(argv, *, timeout, env=None):
@@ -142,9 +145,10 @@ def test_live_done_worker_keeps_description_without_showing_unrelated_done_task(
         if argv[0] == "tasks-axi":
             return workers_module.CommandResult(
                 "count: 2\n"
-                "tasks[2]{id,state,kind,repo,title}:\n"
+                "tasks[3]{id,state,kind,repo,title}:\n"
                 "  done-worker,done,ship,repo,Completed task description\n"
                 "  retired-done,done,ship,repo,Retired task\n"
+                "  empty-worker,done,ship,repo,   \n"
                 "help[1]:\n", 0,
             )
         if argv[0] == "herdr":
@@ -159,6 +163,7 @@ def test_live_done_worker_keeps_description_without_showing_unrelated_done_task(
     message = workers_module.worker_messages(home)[0]
 
     assert "done-worker - Completed task description" in message
+    assert "empty-worker - Description unavailable" in message
     assert "retired-worker" not in message
     assert "retired-done" not in message
     task_calls = [call for call in calls if call[0] == "tasks-axi"]

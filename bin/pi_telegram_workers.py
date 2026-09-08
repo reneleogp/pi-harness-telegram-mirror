@@ -289,7 +289,8 @@ def _task_titles(backlog: Path) -> Optional[dict[str, str]]:
         except (csv.Error, StopIteration):
             continue
         if len(row) == 5 and TASK_ID_PATTERN.fullmatch(row[0]):
-            titles[row[0]] = safe_text(row[4], FIELD_LIMIT)
+            title = safe_text(row[4], FIELD_LIMIT)
+            titles[row[0]] = title or "Description unavailable"
     return titles if saw_rows_header else None
 
 
