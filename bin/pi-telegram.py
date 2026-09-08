@@ -865,17 +865,31 @@ class MirrorBot:
             await self.send("Workers unavailable: no connected Firstmate home.",
                             reply_to=reply_to)
             return
+        generation = self._client_generation
+        root = self.session_root
         try:
-            messages = await asyncio.to_thread(worker_messages, self.session_root)
+            messages = await asyncio.to_thread(worker_messages, root)
         except WorkersUnavailable as exc:
+            if (generation != self._client_generation or self.session_root != root
+                    or not self.connected or not self.client_ready):
+                return
             await self.send(f"Workers unavailable: {exc}.", reply_to=reply_to)
             return
         except Exception as exc:
             log(f"could not read Firstmate workers: {type(exc).__name__}")
+            if (generation != self._client_generation or self.session_root != root
+                    or not self.connected or not self.client_ready):
+                return
             await self.send("Workers unavailable: status could not be read.",
                             reply_to=reply_to)
             return
+        if (generation != self._client_generation or self.session_root != root
+                or not self.connected or not self.client_ready):
+            return
         for message in messages:
+            if (generation != self._client_generation or self.session_root != root
+                    or not self.connected or not self.client_ready):
+                return
             await self.send(message, reply_to=reply_to)
 
     async def request_pi_result(self, command: str, **values: str) -> dict[str, Any]:

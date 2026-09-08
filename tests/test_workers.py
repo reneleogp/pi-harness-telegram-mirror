@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import os
 import sys
+import threading
 
 import pytest
 from pathlib import Path
@@ -487,6 +488,43 @@ def test_owner_helper_reveals_only_the_live_exact_peers_root(tmp_path, monkeypat
     assert owner.session_root(13, 34) == 1
     assert owner.session_root(12, 35) == 1
     assert capsys.readouterr().out == ""
+
+
+def test_workers_result_is_discarded_after_session_changes(tmp_path, monkeypatch):
+    bot = load_path("pi_telegram_workers_race_bot", BOT)
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def delayed_workers(_home):
+        started.set()
+        assert release.wait(2)
+        return ["old session workers"]
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    monkeypatch.setattr(bot, "worker_messages", delayed_workers)
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.client_ready = True
+    mirror.session_root = tmp_path
+    mirror._client_generation = 1
+
+    async def run_race():
+        task = asyncio.create_task(mirror.send_workers(reply_to=4))
+        assert await asyncio.to_thread(started.wait, 2)
+        mirror._client_generation = 2
+        mirror.session_root = tmp_path / "new-session"
+        release.set()
+        await task
+
+    asyncio.run(run_race())
+    assert not [params for method, params in calls if method == "sendMessage"]
 
 
 def test_workers_command_uses_safe_transport_menu_and_multiple_messages(tmp_path, monkeypatch):
