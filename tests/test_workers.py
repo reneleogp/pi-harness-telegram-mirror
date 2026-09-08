@@ -264,6 +264,25 @@ def test_absent_timeout_malformed_and_remote_endpoints_report_unknown(tmp_path, 
     assert "w11:p1" not in queried and "w12:p1" not in queried
 
 
+def test_task_row_count_mismatch_is_unavailable(tmp_path, monkeypatch):
+    home = firstmate_home(tmp_path)
+    (home / "state/current.meta").write_text(herdr_meta("current", "fleet", "w1:p1"))
+
+    def mismatched(argv, *, timeout, env=None):
+        if argv[0] == "tasks-axi":
+            return workers_module.CommandResult(
+                "tasks[1]{id,state,kind,repo,title}:\n"
+                "  current,working,ship,repo,First title\n"
+                "  other,done,ship,repo,Second title\n", 0,
+            )
+        raise AssertionError("status lookup should not run")
+
+    monkeypatch.setattr(workers_module, "_capture_readonly", mismatched)
+
+    with pytest.raises(workers_module.WorkersUnavailable, match="task records"):
+        workers_module.worker_messages(home)
+
+
 def test_duplicate_task_rows_are_unavailable(tmp_path, monkeypatch):
     home = firstmate_home(tmp_path)
     (home / "state/current.meta").write_text(herdr_meta("current", "fleet", "w1:p1"))

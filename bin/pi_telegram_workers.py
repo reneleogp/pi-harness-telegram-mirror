@@ -274,11 +274,14 @@ def _task_titles(backlog: Path) -> Optional[dict[str, str]]:
         return None
     titles: dict[str, str] = {}
     in_rows = False
-    saw_rows_header = False
+    expected_rows: Optional[int] = None
     for line in result.stdout.splitlines():
-        if re.match(r"^tasks\[\d+\]\{id,state,kind,repo,title\}:$", line):
+        header = re.match(r"^tasks\[(\d+)\]\{id,state,kind,repo,title\}:$", line)
+        if header is not None:
+            if expected_rows is not None:
+                return None
+            expected_rows = int(header.group(1))
             in_rows = True
-            saw_rows_header = True
             continue
         if not in_rows:
             continue
@@ -294,7 +297,7 @@ def _task_titles(backlog: Path) -> Optional[dict[str, str]]:
             return None
         title = safe_text(row[4], FIELD_LIMIT)
         titles[row[0]] = title or "Description unavailable"
-    return titles if saw_rows_header else None
+    return titles if expected_rows is not None and len(titles) == expected_rows else None
 
 
 def _progress(home: Path, helper: Path, worker: ManagedWorker) -> tuple[str, str]:
