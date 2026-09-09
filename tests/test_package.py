@@ -105,6 +105,7 @@ const socketPath = join(home, "bot.sock");
 const reloads = [];
 const results = [];
 const handlers = new Map();
+const commands = new Map();
 const registered = [];
 const server = createServer((socket) => {
   socket.on("data", (chunk) => {
@@ -134,9 +135,16 @@ const ctx = {
 };
 const pi = {
   on(name, handler) { handlers.set(name, handler); },
-  registerCommand(name, definition) { registered.push([name, definition]); },
-  reload() { reloads.push(true); idle = false; },
-  sendUserMessage() { throw new Error("unexpected model input"); },
+  registerCommand(name, definition) { registered.push([name, definition]); commands.set(name, definition); },
+  sendUserMessage(content, options) {
+    if (!options?.expandPromptTemplates) throw new Error("unexpected model input");
+    const command = commands.get(content.slice(1));
+    if (!command) throw new Error("reload command was not registered");
+    void command.handler("", {
+      ...ctx,
+      reload() { reloads.push(true); idle = false; },
+    });
+  },
 };
 extension(pi);
 await handlers.get("session_start")({}, ctx);
@@ -201,6 +209,7 @@ const results = [];
 const prompts = [];
 const reloads = [];
 const handlers = new Map();
+const commands = new Map();
 const registered = [["reload", { description: "Another extension" }]];
 const server = createServer((socket) => {
   socket.on("data", (chunk) => {
@@ -226,9 +235,13 @@ const ctx = {
 };
 const pi = {
   on(name, handler) { handlers.set(name, handler); },
-  registerCommand(name, definition) { registered.push([`${name}:1`, definition]); },
-  reload() { reloads.push(true); },
-  sendUserMessage(content) { prompts.push(content); },
+  registerCommand(name, definition) { registered.push([`${name}:1`, definition]); commands.set(name, definition); },
+  sendUserMessage(content, options) {
+    if (!options?.expandPromptTemplates) { prompts.push(content); return; }
+    const command = commands.get(content.slice(1));
+    if (!command) throw new Error("reload command was not registered");
+    void command.handler("", { ...ctx, reload() { reloads.push(true); } });
+  },
 };
 extension(pi);
 await handlers.get("session_start")({}, ctx);
