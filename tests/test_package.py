@@ -1,11 +1,19 @@
 from __future__ import annotations
-import json, os, plistlib, shlex, shutil, subprocess, sys, tempfile
+import json, os, plistlib, shlex, shutil, subprocess, sys, tarfile, tempfile
 from pathlib import Path
 ROOT=Path(__file__).parents[1]
 OWNER=ROOT/'bin/pi-telegram-owner.py'
 def run(*args, env): return subprocess.run([sys.executable,str(OWNER),*args],env=env,capture_output=True,text=True)
-def test_manifest():
- d=json.loads((ROOT/'package.json').read_text()); assert 'pi-package' in d['keywords']; assert d['license']=='MIT'; assert d['pi']['extensions']==['./extensions/telegram-mirror.ts']; assert (ROOT/'LICENSE').is_file(); assert '@earendil-works/pi-coding-agent' in d['peerDependencies']; assert '@earendil-works/pi-ai' in d['peerDependencies']
+def test_manifest(tmp_path):
+ d=json.loads((ROOT/'package.json').read_text())
+ packed=subprocess.run(['npm','pack','--json','--pack-destination',str(tmp_path)],cwd=ROOT,capture_output=True,text=True)
+ assert packed.returncode==0, packed.stderr
+ artifact=json.loads(packed.stdout)[0]
+ assert artifact['name']==d['name']; assert artifact['version']==d['version']; assert artifact['filename']==f"{d['name']}-{d['version']}.tgz"
+ with tarfile.open(tmp_path/artifact['filename'], 'r:gz') as package:
+  changelog=package.extractfile('package/CHANGELOG.md').read().decode()
+ changelog_headings=[line for line in changelog.splitlines() if line.startswith('## ')]
+ assert 'pi-package' in d['keywords']; assert d['version']=='1.0.0'; assert changelog_headings[:2]==['## Unreleased', '## [1.0.0] - 2026-09-09']; assert 'CHANGELOG.md' in d['files']; assert d['license']=='MIT'; assert d['pi']['extensions']==['./extensions/telegram-mirror.ts']; assert (ROOT/'LICENSE').is_file(); assert '@earendil-works/pi-coding-agent' in d['peerDependencies']; assert '@earendil-works/pi-ai' in d['peerDependencies']
 
 def test_exact_root_and_contention():
  with tempfile.TemporaryDirectory() as t:

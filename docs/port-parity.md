@@ -33,8 +33,12 @@ This checklist records the standalone behavior covered by the package and the va
 
 ## Release state
 
-`git ls-remote --tags origin` returned no tags during this task, so `v1` is not an available install target.
+`package.json` declares version `1.0.0`, and `CHANGELOG.md` records the 1.0.0 release boundary for this package.
+The existing `v1` tag points to an older commit and is not the exact identity of this release.
 
-After the validated changes land on the default branch, the repository maintainer publishes the absent immutable `v1` tag at that validated commit.
+After the validated changes land on the default branch, the repository maintainer publishes the immutable `v1.0.0` tag and matching GitHub release at that validated commit.
+Only after that publication action should operators use `pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1.0.0`.
 
-Only after that publication action should operators use the `pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1` command documented in the README.
+The `v1` reference remains an optional major-version channel for compatible v1 updates.
+Use `v1.0.0` and the `pi list` output when the installed package must be auditable.
+Before declaring the release installed, verify that the package version, tag, GitHub release, and installed package all identify the same commit.
