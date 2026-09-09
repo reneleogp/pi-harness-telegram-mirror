@@ -33,7 +33,7 @@ Wire protocol (newline-delimited JSON, both directions):
                     {"t":"accepted","id":"..."}     Pi accepted that message
                     {"t":"rejected","id":"..."}     Pi could not accept it
   bot -> extension  {"t":"deliver","id":"...","text":...,"image":{...}}
-                    {"t":"command","id":N,"command":"token_usage"|"agent_info"|"change_model"|"change_thinking",...selection}
+                    {"t":"command","id":N,"command":"token_usage"|"agent_info"|"change_model"|"change_thinking"|"reload"}
                     {"t":"command_result","id":N|null,"text":...}
                     {"t":"state","mirror":bool,"confirmations":bool}
 
@@ -63,6 +63,9 @@ Pi as conversation text:
                                      Telegram's menu rejects a space
   /telegram                          Pi, toggles mirror mode
   /telegram-settings                 Pi, native settings UI
+
+The Telegram-only /reload-pi-terminal command reloads the connected Pi
+terminal through the authenticated socket.
 
 Mirror mode starts on at every bot start and lives in memory only, so a
 restart always returns to on even when /telegram_off disabled the last run,
@@ -213,6 +216,17 @@ IMAGE_UNSUPPORTED_SESSION_REPLY = (
     "This Pi session cannot receive images yet. "
     "Update the Telegram extension and reload Pi, then send it again."
 )
+RELOAD_PI_TERMINAL_COMMAND = "reload"
+RELOAD_PI_TERMINAL_REPLY = "Pi terminal reload requested."
+RELOAD_PI_TERMINAL_FAILURE = "Pi terminal reload is unavailable."
+RELOAD_PI_TERMINAL_BUSY = (
+    "Pi is busy. Wait for the current response or compaction to finish, then retry."
+)
+RELOAD_PI_TERMINAL_UNAVAILABLE = (
+    "Pi terminal is not connected. Start the paired Pi terminal, then retry "
+    "/reload-pi-terminal."
+)
+RELOAD_PI_TERMINAL_USAGE = "Usage: /reload-pi-terminal"
 HELP_REPLY = (
     "Pi terminal mirror.\n"
     "/telegram_on or /telegram on - start mirroring\n"
@@ -221,7 +235,8 @@ HELP_REPLY = (
     "/agent_info - show model, thinking, and context\n"
     "/change_model - change the connected session model\n"
     "/change_thinking - change its thinking level\n"
-    "/workers - show Firstmate-managed worker status"
+    "/workers - show Firstmate-managed worker status\n"
+    "/reload-pi-terminal - reload the connected Pi terminal"
 )
 
 MIRROR_COMMANDS = ("on", "off", "status")
@@ -245,8 +260,13 @@ STALE_CONTROL_REPLY = "This control belongs to an old Pi session. Run the comman
 CONTROL_PAGE_SIZE = 8
 MAX_CONTROL_CHOICES = 2000
 MAX_CONTROL_MENUS = 32
+MAX_RELOAD_MESSAGE_IDS = 256
 CONTROL_MENU_TTL = 15 * 60
 CONTROL_LEVELS = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+RELOAD_PI_TERMINAL_ALIASES = {
+    "/reload-pi-terminal": RELOAD_PI_TERMINAL_COMMAND,
+    "/reload_pi_terminal": RELOAD_PI_TERMINAL_COMMAND,
+}
 MIRROR_ALIASES = {
     "/telegram_on": "on",
     "/telegram_off": "off",
@@ -255,6 +275,11 @@ MIRROR_ALIASES = {
     "/telegram_confirmations_off": "confirmations-off",
 }
 MENU_COMMANDS = [
+    # Informational commands first, with quota first.
+    {"command": "token_usage", "description": "Show GPT quota"},
+    {"command": "agent_info", "description": "Agent Info"},
+    {"command": "workers", "description": "Show Firstmate-managed workers"},
+    # Telegram settings precede settings for the connected Pi terminal.
     {"command": "telegram_on", "description": "Start mirroring the Pi terminal"},
     {"command": "telegram_off", "description": "Stop mirroring"},
     {"command": "telegram_status", "description": "Show mirror and Pi state"},
@@ -262,11 +287,11 @@ MENU_COMMANDS = [
      "description": "Confirm each message Pi accepts"},
     {"command": "telegram_confirmations_off",
      "description": "Stop confirming accepted messages"},
-    {"command": "token_usage", "description": "Show GPT quota"},
     {"command": "change_model", "description": "Change Model"},
     {"command": "change_thinking", "description": "Change Thinking Level"},
-    {"command": "agent_info", "description": "Agent Info"},
-    {"command": "workers", "description": "Show Firstmate-managed workers"},
+    # Telegram command menus reject hyphens; chat input accepts the exact
+    # requested spelling above as well as this discoverable underscore alias.
+    {"command": "reload_pi_terminal", "description": "Reload the connected Pi terminal"},
 ]
 # Images the captain can send from the paired chat. Anything else is refused
 # before a byte is downloaded.
@@ -617,6 +642,9 @@ class MirrorBot:
     control_menus: "OrderedDict[str, ControlMenu]" = field(default_factory=OrderedDict)
     # The exact root authorized for the currently connected Pi peer.
     session_root: Optional[Path] = None
+    # Telegram retries can deliver the same update more than once. Reload is a
+    # lifecycle action, so do not submit the same accepted chat message twice.
+    reload_message_ids: "OrderedDict[int, None]" = field(default_factory=OrderedDict)
 
     # --- helpers ---
 
@@ -792,6 +820,34 @@ class MirrorBot:
             parts = text.strip().split(maxsplit=1)
             head = parts[0].split("@", 1)[0] if parts else ""
             arguments = parts[1].strip() if len(parts) > 1 else ""
+            reload_command = RELOAD_PI_TERMINAL_ALIASES.get(head)
+            if reload_command is not None:
+                if arguments:
+                    await self.send(RELOAD_PI_TERMINAL_USAGE, reply_to=message_id)
+                    return
+                if not self.reload_session_available():
+                    await self.send(RELOAD_PI_TERMINAL_UNAVAILABLE, reply_to=message_id)
+                    return
+                if isinstance(message_id, int):
+                    if message_id in self.reload_message_ids:
+                        return
+                    self.reload_message_ids[message_id] = None
+                    while len(self.reload_message_ids) > MAX_RELOAD_MESSAGE_IDS:
+                        self.reload_message_ids.popitem(last=False)
+                accepted = await self.request_pi_result(RELOAD_PI_TERMINAL_COMMAND)
+                result_text = accepted.get("text")
+                if result_text in (RELOAD_PI_TERMINAL_BUSY, RELOAD_PI_TERMINAL_FAILURE):
+                    if isinstance(message_id, int):
+                        self.reload_message_ids.pop(message_id, None)
+                    await self.send(result_text, reply_to=message_id)
+                    return
+                if result_text != RELOAD_PI_TERMINAL_REPLY:
+                    if isinstance(message_id, int):
+                        self.reload_message_ids.pop(message_id, None)
+                    await self.send(RELOAD_PI_TERMINAL_UNAVAILABLE, reply_to=message_id)
+                    return
+                await self.send(RELOAD_PI_TERMINAL_REPLY, reply_to=message_id)
+                return
             if head == "/token_usage":
                 await self.send(await self.request_pi_command(TOKEN_USAGE_COMMAND), reply_to=message_id)
                 return
@@ -906,6 +962,10 @@ class MirrorBot:
         for message in messages:
             await self.send(message, reply_to=reply_to)
 
+    def reload_session_available(self) -> bool:
+        """Require the socket peer to remain an exact eligible Pi session."""
+        return self.connected and self.client_ready and self.session_root is not None
+
     async def request_pi_result(self, command: str, **values: str) -> dict[str, Any]:
         if not self.connected or not self.client_ready:
             return {"text": AGENT_CONTROL_UNAVAILABLE}
@@ -924,7 +984,10 @@ class MirrorBot:
         except (asyncio.TimeoutError, asyncio.CancelledError):
             self.command_waiters.pop(command_id, None)
             return {"text": AGENT_CONTROL_UNAVAILABLE}
-        if generation != self._client_generation or not self.connected or not self.client_ready:
+        # Reload acknowledges before the Pi-side reload closes this socket. Its
+        # accepted result is the handoff boundary, not a session-stability check.
+        if (command != RELOAD_PI_TERMINAL_COMMAND and
+                (generation != self._client_generation or not self.connected or not self.client_ready)):
             return {"text": "The Pi session changed before the result could be verified."}
         return result
 

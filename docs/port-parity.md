@@ -9,6 +9,7 @@ This checklist records the standalone behavior covered by the package and the va
 - [x] PNG, JPEG, and WebP images in both directions, with magic validation, size limits, captions, albums, and unsupported-session handling.
 - [x] Local Parakeet voice review, bounded transcript cards, edit, copy, send, cancel, stale-button protection, and temporary-file cleanup.
 - [x] Mirror settings, footer visibility, delivery confirmations, status, and Telegram command aliases.
+- [x] Authenticated `/reload-pi-terminal` reload for the exact connected eligible Pi session, with menu alias, idle/busy handling, and duplicate-delivery protection.
 - [x] Private pairing, exact canonical root eligibility, one live session, kernel peer checks, owner-private state, and safe file boundaries.
 - [x] Markdown and HTML-safe formatting with bounded chunks and plain-text fallback.
 - [x] macOS LaunchAgent and Linux systemd user-service generation, installation, status, and removal paths.
@@ -18,11 +19,11 @@ This checklist records the standalone behavior covered by the package and the va
 
 ## Validation evidence
 
-- `tests/run.sh` passed: 73 test executions (27 combined, 13 Telegram, 6 package, and 27 combined through the non-live E2E wrapper).
-- `python3 -m pytest -q` passed: 27 tests.
+- `tests/run.sh` passed: 167 test executions (71 combined, 35 Telegram, 9 package, and 52 combined through the non-live E2E wrapper).
+- `python3 -m pytest -q` passed: 71 tests.
 - `python3 -m pytest -q tests/test_behavior_matrix.py` passed: 8 tests.
-- `python3 -m pytest -q tests/test_package.py` passed: 6 tests.
-- `python3 -m pytest -q tests/test_telegram.py` passed: 13 tests.
+- `python3 -m pytest -q tests/test_package.py` passed: 9 tests.
+- `python3 -m pytest -q tests/test_telegram.py` passed: 35 tests.
 - Pi extension delivery-mode smoke passed with Node's type stripping loader.
 - Fake HTTP transport and real Unix-socket protocol smoke passed with isolated temporary state.
 - Service-unit tests validated macOS LaunchAgent plist generation on this host.

@@ -93,6 +93,9 @@ const FOOTER_KEY = "pi-telegram";
 // from anywhere reads the same to Pi.
 const IMAGE_MARKER = "[Image attached]";
 const DISPLAY_SETTING_FILE = "pi-display-status";
+type ReloadableExtensionAPI = ExtensionAPI & {
+  reload?: () => void | Promise<void>;
+};
 
 function positiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -400,6 +403,7 @@ export default function (pi: ExtensionAPI) {
   let confirmations = true;
   let displayStatus = readDisplayStatus();
   let commandsRegistered = false;
+  let reloadCommandName: string | null = null;
   let lockWaitTimer: ReturnType<typeof setTimeout> | null = null;
   let lockWaitAttempts = 0;
 
@@ -525,6 +529,39 @@ export default function (pi: ExtensionAPI) {
       if (typeof frame.mirror === "boolean") mirrorOn = frame.mirror;
       if (typeof frame.confirmations === "boolean") confirmations = frame.confirmations;
       refreshFooter();
+      return;
+    }
+    if (frame.t === "command" && frame.command === "reload" && typeof frame.id === "number") {
+      const ctx = activeCtx;
+      if (!ctx || !ctx.isIdle()) {
+        write({
+          t: "command_result",
+          id: frame.id,
+          text: "Pi is busy. Wait for the current response or compaction to finish, then retry.",
+        });
+        return;
+      }
+      const reload = (pi as ReloadableExtensionAPI).reload;
+      if (typeof reload !== "function" && !reloadCommandName) {
+        write({ t: "command_result", id: frame.id, text: "Pi terminal reload is unavailable." });
+        return;
+      }
+      // Reload immediately tears down this extension instance, so acknowledge
+      // the authenticated request before invoking Pi's native reload action.
+      write({ t: "command_result", id: frame.id, text: "Pi terminal reload requested." });
+      if (typeof reload === "function") {
+        void Promise.resolve().then(() => reload.call(pi)).catch((error: unknown) => {
+          const detail = error instanceof Error ? error.message : String(error);
+          console.error(`pi-telegram-mirror: could not reload Pi: ${detail}`);
+        });
+      } else {
+        try {
+          pi.sendUserMessage(`/${reloadCommandName}`, { expandPromptTemplates: true });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          console.error(`pi-telegram-mirror: could not dispatch Pi reload: ${detail}`);
+        }
+      }
       return;
     }
     if (frame.t === "command" && frame.command === "token_usage" && typeof frame.id === "number") {
@@ -685,6 +722,22 @@ export default function (pi: ExtensionAPI) {
   function registerCommands(): void {
     if (commandsRegistered) return;
     commandsRegistered = true;
+
+    if (typeof (pi as ReloadableExtensionAPI).reload !== "function") {
+      reloadCommandName = `pi-telegram-reload-${process.pid}`;
+      pi.registerCommand?.(reloadCommandName, {
+        description: "Reload Pi for the Telegram mirror.",
+        handler: async (_args, ctx) => {
+          if (!ctx.isIdle()) return;
+          try {
+            await ctx.reload();
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            console.error(`pi-telegram-mirror: could not reload Pi: ${detail}`);
+          }
+        },
+      });
+    }
 
     pi.registerCommand?.("telegram", {
       description: "Toggle the Telegram terminal mirror.",

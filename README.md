@@ -6,7 +6,7 @@ This package has no required Firstmate runtime dependency, database, web service
 
 ## Install
 
-The stable `v1` tag is published on `origin`.
+The current release and tag state is recorded in [docs/port-parity.md](docs/port-parity.md).
 
 For isolated validation from a checked-out commit, install the local package without changing global settings:
 
@@ -16,7 +16,7 @@ pi list
 pi remove -l /absolute/path/to/pi-harness-telegram-mirror
 ```
 
-Stable install commands are:
+Stable install commands, after the maintainer publishes `v1`, are:
 
 ```sh
 pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1
@@ -43,6 +43,7 @@ Pairing stores only one private sender/chat in owner-only `config.json`. Never p
 ## Ownership and security
 
 `allow-root` records the exact canonical root. A session claims the mirror only when exact `ctx.cwd` matches a registered root; subdirectories and worktrees do not match. An owner-only atomic session record contains PID, UID, process-start identity, root, and random incarnation. Dead/reused records are safely reclaimable. The bot validates kernel identity, never client claims: Linux `SO_PEERCRED`; macOS kernel peer PID and `getpeereid` UID. A second session or unrelated session is refused and an ineligible session stays inert. Kernel peer credentials protect the bot boundary; a same-UID process that can execute the local helper is trusted by the ownership handoff.
+The reload command uses that same connected socket and ownership boundary, invokes Pi's native `/reload` action for the current session, and never starts another Pi session or restarts the Telegram service.
 
 State, token, config, socket, ownership, and audio are under `~/.pi-telegram`, so service execution never needs project-folder privacy permission. Files/config are 0600 and the directory is 0700.
 
@@ -60,10 +61,11 @@ Linux systemd user services and macOS LaunchAgents are supported. Linux uses `~/
 ## Behavior and Pi commands
 
 The extension registers `/telegram` and `/telegram-settings`; the latter controls footer visibility and delivery confirmations.
-Telegram commands are `/telegram_on`, `/telegram_off`, `/telegram_status`, `/token_usage`, `/agent_info`, `/change_model`, `/change_thinking`, and `/workers` (plus spaced forms where applicable).
+Telegram commands are `/telegram_on`, `/telegram_off`, `/telegram_status`, `/token_usage`, `/agent_info`, `/change_model`, `/change_thinking`, `/workers`, and `/reload-pi-terminal` (plus spaced forms where applicable).
 See [docs/telegram.md](docs/telegram.md) for agent-control behavior, ownership, confirmation, and worker status details.
 `/token_usage` reports concise GPT quota windows in the paired private chat.
 `/workers` provides a labeled, read-only worker snapshot; see [docs/telegram.md](docs/telegram.md) for its ownership and status behavior.
+`/reload_pi_terminal` is the Telegram menu alias for `/reload-pi-terminal`.
 Text is in-memory FIFO with bounded frames and one session.
 Accepted messages optionally receive `Pi · Sent to Pi.`.
 Final visible replies are sent once, unthreaded.
