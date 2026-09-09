@@ -135,14 +135,8 @@ const ctx = {
 const pi = {
   on(name, handler) { handlers.set(name, handler); },
   registerCommand(name, definition) { registered.push([name, definition]); },
-  sendUserMessage(content) {
-    const command = registered.find(([name]) => content === `/${name}`);
-    if (!command) throw new Error(`unexpected prompt: ${content}`);
-    void command[1].handler("", {
-      ...ctx,
-      reload: async () => { reloads.push(true); idle = false; },
-    });
-  },
+  reload() { reloads.push(true); idle = false; },
+  sendUserMessage() { throw new Error("unexpected model input"); },
 };
 extension(pi);
 await handlers.get("session_start")({}, ctx);
@@ -228,20 +222,13 @@ await new Promise((resolve, reject) => {
 const ctx = {
   cwd: root,
   isIdle: () => true,
-  reload: async () => { throw new Error("must not reload"); },
   ui: { theme: { fg: (_color, text) => text }, setStatus() {}, notify() {} },
 };
 const pi = {
   on(name, handler) { handlers.set(name, handler); },
   registerCommand(name, definition) { registered.push([`${name}:1`, definition]); },
-  sendUserMessage(content) {
-    const command = registered.find(([name]) => name.startsWith("pi-telegram-reload"));
-    if (!command || content !== "/pi-telegram-reload") {
-      prompts.push(content);
-      return;
-    }
-    void command[1].handler("", { ...ctx, reload: async () => { reloads.push(true); } });
-  },
+  reload() { reloads.push(true); },
+  sendUserMessage(content) { prompts.push(content); },
 };
 extension(pi);
 await handlers.get("session_start")({}, ctx);
