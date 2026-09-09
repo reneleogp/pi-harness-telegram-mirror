@@ -268,6 +268,39 @@ def test_reload_pi_terminal_reports_busy_sessions(tmp_path):
     ]
 
 
+def test_reload_pi_terminal_preserves_reload_failure(tmp_path):
+    bot = load_bot()
+    calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.client_ready = True
+    mirror.session_root = tmp_path
+
+    async def fake_request(command, **values):
+        assert command == "reload"
+        return {"text": bot.RELOAD_PI_TERMINAL_FAILURE}
+
+    mirror.request_pi_result = fake_request
+    asyncio.run(mirror.handle_update({"message": {
+        "message_id": 6,
+        "from": {"id": 7},
+        "chat": {"id": 8, "type": "private"},
+        "text": "/reload-pi-terminal",
+    }}))
+
+    assert [params["text"] for method, params in calls if method == "sendMessage"] == [
+        bot.RELOAD_PI_TERMINAL_FAILURE,
+    ]
+
+
 def test_reload_pi_terminal_rejects_disconnected_unauthorized_and_malformed_messages(tmp_path):
     bot = load_bot()
     calls = []
