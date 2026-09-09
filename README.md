@@ -6,7 +6,7 @@ This package has no required Firstmate runtime dependency, database, web service
 
 ## Install
 
-The stable `v1` tag is published on `origin`.
+The current release and tag state is recorded in [docs/port-parity.md](docs/port-parity.md).
 
 For isolated validation from a checked-out commit, install the local package without changing global settings:
 
@@ -16,7 +16,7 @@ pi list
 pi remove -l /absolute/path/to/pi-harness-telegram-mirror
 ```
 
-Stable install commands are:
+Stable install commands, after the maintainer publishes `v1`, are:
 
 ```sh
 pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1
