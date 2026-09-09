@@ -9,6 +9,7 @@ This checklist records the standalone behavior covered by the package and the va
 - [x] PNG, JPEG, and WebP images in both directions, with magic validation, size limits, captions, albums, and unsupported-session handling.
 - [x] Local Parakeet voice review, bounded transcript cards, edit, copy, send, cancel, stale-button protection, and temporary-file cleanup.
 - [x] Mirror settings, footer visibility, delivery confirmations, status, and Telegram command aliases.
+- [x] Authenticated `/reload-pi-terminal` reload for the exact connected eligible Pi session, with menu alias, idle/busy handling, and duplicate-delivery protection.
 - [x] Private pairing, exact canonical root eligibility, one live session, kernel peer checks, owner-private state, and safe file boundaries.
 - [x] Markdown and HTML-safe formatting with bounded chunks and plain-text fallback.
 - [x] macOS LaunchAgent and Linux systemd user-service generation, installation, status, and removal paths.

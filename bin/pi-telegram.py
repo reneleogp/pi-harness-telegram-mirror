@@ -57,13 +57,15 @@ Pi as conversation text:
   /change_model                    choose the owning Pi session's model
   /change_thinking                 choose its thinking level
   /workers                         Firstmate-managed worker status
-  /reload-pi-terminal              reload the connected Pi terminal
   /telegram_confirmations_on | /telegram_confirmations_off
                                      Telegram menu aliases, published to the
                                      paired chat with setMyCommands because
                                      Telegram's menu rejects a space
   /telegram                          Pi, toggles mirror mode
   /telegram-settings                 Pi, native settings UI
+
+The Telegram-only /reload-pi-terminal command reloads the connected Pi
+terminal through the authenticated socket.
 
 Mirror mode starts on at every bot start and lives in memory only, so a
 restart always returns to on even when /telegram_off disabled the last run,
