@@ -104,7 +104,6 @@ chmodSync(config, 0o600);
 const socketPath = join(home, "bot.sock");
 const reloads = [];
 const results = [];
-const dispatches = [];
 const handlers = new Map();
 const registered = [];
 const server = createServer((socket) => {
@@ -138,17 +137,14 @@ const pi = {
       sourceInfo: { path: `${process.cwd()}/extensions/telegram-mirror.ts` },
     }));
   },
-  sendUserMessage(content, options) {
-    dispatches.push([content, options]);
-    const command = registered.find(([name]) => name === "reload");
-    if (!command) throw new Error("reload command was not registered");
-    Promise.resolve(command[1].handler("", ctx)).catch((error) => { throw error; });
+  reload() {
+    reloads.push(true);
+    idle = false;
   },
 };
 const ctx = {
   cwd: root,
   isIdle: () => idle,
-  reload: async () => { reloads.push(true); idle = false; },
   ui: { theme: { fg: (_color, text) => text }, setStatus() {}, notify() {} },
 };
 extension(pi);
@@ -158,11 +154,11 @@ for (let attempt = 0; attempt < 50 && results.length < 2; attempt++) {
 }
 await handlers.get("session_shutdown")({}, ctx);
 await new Promise((resolve) => server.close(resolve));
-if (reloads.length !== 1 || results.length !== 2 || dispatches.length !== 1 ||
-    dispatches[0][0] !== "/reload" || dispatches[0][1]?.expandPromptTemplates !== true ||
+if (reloads.length !== 1 || results.length !== 2 ||
+    registered.some(([name]) => name === "reload") ||
     results[0].text !== "Pi terminal reload requested." ||
     results[1].text !== "Pi is busy. Wait for the current response or compaction to finish, then retry.") {
-  throw new Error(JSON.stringify({ reloads, results, dispatches }));
+  throw new Error(JSON.stringify({ reloads, results, registered }));
 }
 '''
     result = subprocess.run(
@@ -234,13 +230,6 @@ await new Promise((resolve, reject) => {
 const pi = {
   on(name, handler) { handlers.set(name, handler); },
   registerCommand(name, definition) { registered.push([`${name}:1`, definition]); },
-  getCommands() {
-    return registered.map(([name], index) => ({
-      name,
-      source: "extension",
-      sourceInfo: { path: index === 0 ? "/other/reload.ts" : `${process.cwd()}/extensions/telegram-mirror.ts` },
-    }));
-  },
   sendUserMessage: () => { prompts.push(true); },
 };
 const ctx = {

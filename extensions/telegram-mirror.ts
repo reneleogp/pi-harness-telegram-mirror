@@ -93,7 +93,9 @@ const FOOTER_KEY = "pi-telegram";
 // from anywhere reads the same to Pi.
 const IMAGE_MARKER = "[Image attached]";
 const DISPLAY_SETTING_FILE = "pi-display-status";
-const EXTENSION_PATH = fileURLToPath(import.meta.url);
+type ReloadableExtensionAPI = ExtensionAPI & {
+  reload?: () => void | Promise<void>;
+};
 
 function positiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -424,10 +426,10 @@ export default function (pi: ExtensionAPI) {
     openSocket();
   }
 
-  function reloadCommandAvailable(): boolean {
-    return (pi.getCommands?.() ?? []).some((command) =>
-      command.name === "reload" && command.source === "extension" &&
-      command.sourceInfo.path === EXTENSION_PATH);
+  function nativeReload(): (() => Promise<void>) | undefined {
+    const reload = (pi as ReloadableExtensionAPI).reload;
+    if (typeof reload !== "function") return undefined;
+    return async () => { await reload.call(pi); };
   }
 
   function write(frame: Record<string, unknown>): boolean {
@@ -544,12 +546,16 @@ export default function (pi: ExtensionAPI) {
         });
         return;
       }
-      if (!reloadCommandAvailable()) {
+      const reload = nativeReload();
+      if (!reload) {
         write({ t: "command_result", id: frame.id, text: "Pi terminal reload is unavailable." });
         return;
       }
       write({ t: "command_result", id: frame.id, text: "Pi terminal reload requested." });
-      pi.sendUserMessage("/reload", { expandPromptTemplates: true });
+      void reload().catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(`pi-telegram-mirror: could not reload Pi: ${detail}`);
+      });
       return;
     }
     if (frame.t === "command" && frame.command === "token_usage" && typeof frame.id === "number") {
@@ -710,13 +716,6 @@ export default function (pi: ExtensionAPI) {
   function registerCommands(): void {
     if (commandsRegistered) return;
     commandsRegistered = true;
-
-    pi.registerCommand?.("reload", {
-      description: "Reload Pi extensions and resources.",
-      handler: async (_args, ctx) => {
-        if (ctx.isIdle()) await ctx.reload();
-      },
-    });
 
     pi.registerCommand?.("telegram", {
       description: "Toggle the Telegram terminal mirror.",

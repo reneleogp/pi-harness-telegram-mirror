@@ -109,7 +109,7 @@ In Telegram, these switch it and are never sent to Pi as conversation text:
 
 The reload command is handled directly by the bot and extension and never becomes mirrored conversation text.
 It is accepted only from the paired private chat and only while the exact eligible Pi session owns the authenticated socket.
-The extension acknowledges the request on that socket, then invokes Pi's supported `/reload` behavior through its existing user-message command path.
+The extension acknowledges the request on that socket, then invokes Pi's supported native `/reload` action directly.
 It does not restart the Telegram service, kill processes, spawn another Pi session, or affect unrelated sessions.
 A repeated delivery of the same Telegram message is ignored after the reload has been accepted.
 The three agent controls are handled directly by the bot and extension and never become conversation input.
