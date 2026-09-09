@@ -3,6 +3,7 @@
 Standalone bidirectional Telegram mirror for one Pi terminal session.
 Review extensions before installing: Pi packages run with full local permissions.
 This package has no required Firstmate runtime dependency, database, web service, cloud queue, account system, telemetry, or generalized daemon.
+The package version is `1.0.0`, and the maintained history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Install
 
@@ -16,15 +17,21 @@ pi list
 pi remove -l /absolute/path/to/pi-harness-telegram-mirror
 ```
 
-Stable install commands, after the maintainer publishes `v1`, are:
+For an auditable stable install, use the immutable `v1.0.0` tag after the maintainer publishes it:
 
 ```sh
-pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1
-pi update git:github.com/reneleogp/pi-harness-telegram-mirror@v1
+pi install git:github.com/reneleogp/pi-harness-telegram-mirror@v1.0.0
+pi update git:github.com/reneleogp/pi-harness-telegram-mirror@v1.0.0
+pi list
 pi remove git:github.com/reneleogp/pi-harness-telegram-mirror
 ```
 
-`package.json` is a Pi manifest (`pi-package`) and loads `extensions/telegram-mirror.ts`. Python runs from this stable installed package location and uses the standard library; `mistune` is optional for formatting.
+`pi list` must show `git:github.com/reneleogp/pi-harness-telegram-mirror@v1.0.0` for the exact installation.
+The optional `@v1` major-version channel may follow the latest compatible v1 release, but it is not an exact release identity.
+Record the `pi list` package line together with the service `status` output when auditing an installation.
+
+`package.json` is a Pi manifest (`pi-package`) and loads `extensions/telegram-mirror.ts`.
+Python runs from this stable installed package location and uses the standard library; `mistune` is optional for formatting.
 
 ## Private setup
 
@@ -52,6 +59,7 @@ State, token, config, socket, ownership, and audio are under `~/.pi-telegram`, s
 ```sh
 python3 /installed/package/bin/pi-telegram.py service-unit
 python3 /installed/package/bin/pi-telegram.py install-service
+pi list  # verify the exact @v1.0.0 package identity
 python3 /installed/package/bin/pi-telegram.py status
 python3 /installed/package/bin/pi-telegram.py uninstall-service
 ```

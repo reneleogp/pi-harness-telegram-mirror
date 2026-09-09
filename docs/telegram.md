@@ -10,14 +10,19 @@ The bot never starts Pi, never creates a second session, and contains no model o
 
 ## Setup
 
-Resolve the installed package directory directly with Pi's machine-readable package listing:
+Resolve the installed package directory from Pi's package listing and verify the exact release identity:
 
 ```sh
-export PI_TELEGRAM_PACKAGE="$(pi list --json | python3 -c 'import json,sys; items=json.load(sys.stdin); print(next(x["path"] for x in items if x["name"] == "pi-harness-telegram-mirror"))')"
+pi list
+export PI_TELEGRAM_PACKAGE="$(pi list | awk '$1 == "git:github.com/reneleogp/pi-harness-telegram-mirror@v1.0.0" { getline; print $1; exit }')"
+test -n "$PI_TELEGRAM_PACKAGE"
 "$PI_TELEGRAM_PACKAGE/bin/pi-telegram.py" package-root
+"$PI_TELEGRAM_PACKAGE/bin/pi-telegram.py" status
 ```
 
-The command fails if the package is not installed; no repository checkout is needed. The output is the installed package root used by the service and extension.
+The package listing must contain `git:github.com/reneleogp/pi-harness-telegram-mirror@v1.0.0` for an auditable 1.0.0 installation.
+The command fails if the exact package is not installed; no repository checkout is needed.
+The output is the installed package root used by the service and extension.
 
 1. Create a bot with Telegram's `@BotFather` and copy its token.
 2. Store the token privately (this file is never read by the service unit):

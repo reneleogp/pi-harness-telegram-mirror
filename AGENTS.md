@@ -6,6 +6,12 @@
 - Validate package loading with Pi before committing, and keep release instructions accurate about available tags.
 - Do not send live Telegram messages or alter an installed service during tests.
 
+## Versioning and changelog
+
+- Every user-visible change updates `CHANGELOG.md`'s `Unreleased` section in the same PR.
+- Release preparation updates `package.json`, promotes those entries to a dated version section, and keeps README install and status instructions accurate.
+- Before release, verify that the package version, immutable tag, GitHub release, and installed package identify the same commit; use `README.md` and `docs/port-parity.md` for the authoritative release procedure.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
