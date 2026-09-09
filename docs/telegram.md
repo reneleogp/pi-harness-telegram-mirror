@@ -14,7 +14,7 @@ Resolve the installed package directory from Pi's package listing and verify the
 
 ```sh
 pi list
-export PI_TELEGRAM_PACKAGE="$(pi list | awk '$1 == "git:github.com/reneleogp/pi-harness-telegram-mirror@v1.0.0" { getline; print $1; exit }')"
+export PI_TELEGRAM_PACKAGE="$(pi list | awk '$1 == "git:github.com/reneleogp/pi-harness-telegram-mirror@v1.0.0" { getline; sub(/^[[:space:]]+/, "", $0); print; exit }')"
 test -n "$PI_TELEGRAM_PACKAGE"
 "$PI_TELEGRAM_PACKAGE/bin/pi-telegram.py" package-root
 "$PI_TELEGRAM_PACKAGE/bin/pi-telegram.py" status
