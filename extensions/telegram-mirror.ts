@@ -93,9 +93,7 @@ const FOOTER_KEY = "pi-telegram";
 // from anywhere reads the same to Pi.
 const IMAGE_MARKER = "[Image attached]";
 const DISPLAY_SETTING_FILE = "pi-display-status";
-type ReloadableExtensionAPI = ExtensionAPI & {
-  reload?: () => void | Promise<void>;
-};
+const RELOAD_COMMAND_NAME = "pi-telegram-reload";
 
 function positiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -426,12 +424,6 @@ export default function (pi: ExtensionAPI) {
     openSocket();
   }
 
-  function nativeReload(): (() => Promise<void>) | undefined {
-    const reload = (pi as ReloadableExtensionAPI).reload;
-    if (typeof reload !== "function") return undefined;
-    return async () => { await reload.call(pi); };
-  }
-
   function write(frame: Record<string, unknown>): boolean {
     const target = socket;
     if (!target || target.destroyed) return false;
@@ -546,16 +538,12 @@ export default function (pi: ExtensionAPI) {
         });
         return;
       }
-      const reload = nativeReload();
-      if (!reload) {
-        write({ t: "command_result", id: frame.id, text: "Pi terminal reload is unavailable." });
-        return;
-      }
+      // Extension event contexts do not expose Pi's session-control actions.
+      // Dispatch a private extension command so Pi creates the command context
+      // that owns the supported reload action. The acknowledgement is written
+      // first because reload immediately tears down this extension instance.
       write({ t: "command_result", id: frame.id, text: "Pi terminal reload requested." });
-      void reload().catch((error: unknown) => {
-        const detail = error instanceof Error ? error.message : String(error);
-        console.error(`pi-telegram-mirror: could not reload Pi: ${detail}`);
-      });
+      pi.sendUserMessage(`/${RELOAD_COMMAND_NAME}`, { expandPromptTemplates: true });
       return;
     }
     if (frame.t === "command" && frame.command === "token_usage" && typeof frame.id === "number") {
@@ -716,6 +704,13 @@ export default function (pi: ExtensionAPI) {
   function registerCommands(): void {
     if (commandsRegistered) return;
     commandsRegistered = true;
+
+    pi.registerCommand?.(RELOAD_COMMAND_NAME, {
+      description: "Reload Pi extensions and resources for Telegram.",
+      handler: async (_args, ctx) => {
+        if (ctx.isIdle()) await ctx.reload();
+      },
+    });
 
     pi.registerCommand?.("telegram", {
       description: "Toggle the Telegram terminal mirror.",

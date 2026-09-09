@@ -127,25 +127,22 @@ await new Promise((resolve, reject) => {
   server.listen(socketPath, resolve);
 });
 let idle = true;
-const pi = {
-  on(name, handler) { handlers.set(name, handler); },
-  registerCommand(name, definition) { registered.push([name, definition]); },
-  getCommands() {
-    return registered.map(([name]) => ({
-      name,
-      source: "extension",
-      sourceInfo: { path: `${process.cwd()}/extensions/telegram-mirror.ts` },
-    }));
-  },
-  reload() {
-    reloads.push(true);
-    idle = false;
-  },
-};
 const ctx = {
   cwd: root,
   isIdle: () => idle,
   ui: { theme: { fg: (_color, text) => text }, setStatus() {}, notify() {} },
+};
+const pi = {
+  on(name, handler) { handlers.set(name, handler); },
+  registerCommand(name, definition) { registered.push([name, definition]); },
+  sendUserMessage(content) {
+    const command = registered.find(([name]) => content === `/${name}`);
+    if (!command) throw new Error(`unexpected prompt: ${content}`);
+    void command[1].handler("", {
+      ...ctx,
+      reload: async () => { reloads.push(true); idle = false; },
+    });
+  },
 };
 extension(pi);
 await handlers.get("session_start")({}, ctx);
@@ -208,6 +205,7 @@ chmodSync(config, 0o600);
 const socketPath = join(home, "bot.sock");
 const results = [];
 const prompts = [];
+const reloads = [];
 const handlers = new Map();
 const registered = [["reload", { description: "Another extension" }]];
 const server = createServer((socket) => {
@@ -227,16 +225,23 @@ await new Promise((resolve, reject) => {
   server.once("error", reject);
   server.listen(socketPath, resolve);
 });
-const pi = {
-  on(name, handler) { handlers.set(name, handler); },
-  registerCommand(name, definition) { registered.push([`${name}:1`, definition]); },
-  sendUserMessage: () => { prompts.push(true); },
-};
 const ctx = {
   cwd: root,
   isIdle: () => true,
   reload: async () => { throw new Error("must not reload"); },
   ui: { theme: { fg: (_color, text) => text }, setStatus() {}, notify() {} },
+};
+const pi = {
+  on(name, handler) { handlers.set(name, handler); },
+  registerCommand(name, definition) { registered.push([`${name}:1`, definition]); },
+  sendUserMessage(content) {
+    const command = registered.find(([name]) => name.startsWith("pi-telegram-reload"));
+    if (!command || content !== "/pi-telegram-reload") {
+      prompts.push(content);
+      return;
+    }
+    void command[1].handler("", { ...ctx, reload: async () => { reloads.push(true); } });
+  },
 };
 extension(pi);
 await handlers.get("session_start")({}, ctx);
@@ -245,8 +250,9 @@ for (let attempt = 0; attempt < 50 && results.length === 0; attempt++) {
 }
 await handlers.get("session_shutdown")({}, ctx);
 await new Promise((resolve) => server.close(resolve));
-if (prompts.length !== 0 || results.length !== 1 || results[0].text !== "Pi terminal reload is unavailable.") {
-  throw new Error(JSON.stringify({ prompts, results }));
+if (prompts.length !== 0 || reloads.length !== 1 || results.length !== 1 ||
+    results[0].text !== "Pi terminal reload requested.") {
+  throw new Error(JSON.stringify({ prompts, reloads, results }));
 }
 '''
     result = subprocess.run(
