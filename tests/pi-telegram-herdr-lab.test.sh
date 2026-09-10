@@ -39,12 +39,18 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 with tempfile.TemporaryDirectory() as directory:
     home = Path(directory)
-    for name in ("state", "bin", "data"):
+    for name in ("state", "bin", "data", "projects", "config"):
         (home / name).mkdir()
     (home / "bin/fm-crew-state.sh").write_text("")
     (home / "data/backlog.md").write_text("")
+    snapshot = module._herdr_snapshot(socket_path)
+    primary_workspace_id = next(
+        workspace["workspace_id"] for workspace in snapshot["workspaces"]
+        if workspace.get("label") == "primary"
+    )
     messages = module.worker_messages(
-        home, herdr_socket_path=socket_path, herdr_workspace_id="w1"
+        home, herdr_socket_path=socket_path,
+        herdr_workspace_id=primary_workspace_id,
     )
     text = "\n".join(messages)
     for expected in ("Firstmate - primary", "Workspace - managed", "Workspace - shell"):

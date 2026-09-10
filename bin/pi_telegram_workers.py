@@ -708,7 +708,8 @@ def _paginate(entries: list[str], heading: str, limit: int) -> list[str]:
 
 def worker_messages(home: Path, limit: int = WORKER_MESSAGE_LIMIT, *,
                     herdr_socket_path: Optional[str] = None,
-                    herdr_workspace_id: Optional[str] = None) -> list[str]:
+                    herdr_workspace_id: Optional[str] = None,
+                    herdr_session: Optional[str] = None) -> list[str]:
     state, _helper, _backlog = _firstmate_paths(home)
     if herdr_socket_path is not None:
         workspaces = _live_workspaces(herdr_socket_path, herdr_workspace_id)
@@ -718,11 +719,11 @@ def worker_messages(home: Path, limit: int = WORKER_MESSAGE_LIMIT, *,
                          "Herdr workspaces", limit)
 
     # Firstmate itself may be a normal Pi process launched outside a Herdr pane.
-    # In that case, use the exact Herdr session recorded by its owned endpoint
-    # metadata and an explicit CLI session flag. Never guess a default session.
-    herdr_session = _herdr_session_from_metadata(state)
-    if herdr_session is not None:
-        snapshot = _herdr_cli_snapshot(herdr_session)
+    # Prefer the exact session binding announced by that connected Pi session.
+    session = (herdr_session if herdr_session is not None
+               else _herdr_session_from_metadata(state))
+    if session is not None:
+        snapshot = _herdr_cli_snapshot(session)
         primary = _infer_primary_workspace(snapshot, home)
         workspaces = _live_workspaces_from_snapshot(snapshot, primary)
         if not workspaces:
@@ -730,7 +731,7 @@ def worker_messages(home: Path, limit: int = WORKER_MESSAGE_LIMIT, *,
         return _paginate([_live_entry(workspace) for workspace in workspaces],
                          "Herdr workspaces", limit)
 
-    # A Pi session outside Herdr with no exact Herdr metadata has no live
+    # A Pi session outside Herdr with no exact Herdr binding has no live
     # workspace authority. Keep the historical task view as a clearly separate
     # fallback, never as a claim about open Herdr contexts.
     views = collect_worker_views(home)

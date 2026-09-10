@@ -108,6 +108,7 @@ const home = mkdtempSync(join(tmpdir(), "pi-telegram-reload-home-"));
 process.env.PI_TELEGRAM_DIR = home;
 process.env.HERDR_SOCKET_PATH = "/private/herdr/sessions/connected/herdr.sock";
 delete process.env.HERDR_WORKSPACE_ID;
+process.env.HERDR_SESSION = "outside-session";
 const config = join(home, "config.json");
 writeFileSync(config, JSON.stringify({ allowed_roots: [root], pi_executable: "node" }) + "\n");
 chmodSync(config, 0o600);
@@ -168,6 +169,7 @@ await new Promise((resolve) => server.close(resolve));
 if (reloads.length !== 1 || results.length !== 2 || hellos.length !== 1 ||
     hellos[0].herdr_socket_path !== "/private/herdr/sessions/connected/herdr.sock" ||
     "herdr_workspace_id" in hellos[0] ||
+    hellos[0].herdr_session !== "outside-session" ||
     registered.some(([name]) => name === "reload") ||
     results[0].text !== "Pi terminal reload requested." ||
     results[1].text !== "Pi is busy. Wait for the current response or compaction to finish, then retry.") {

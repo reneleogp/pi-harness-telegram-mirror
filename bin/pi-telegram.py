@@ -25,7 +25,8 @@ overridden by PI_TELEGRAM_DIR):
 Wire protocol (newline-delimited JSON, both directions):
 
   extension -> bot  {"t":"hello","features":["image"],
-                         "herdr_socket_path":..., "herdr_workspace_id":...}
+                         "herdr_socket_path":..., "herdr_workspace_id":...,
+                         "herdr_session":...}
                     {"t":"terminal","text":...,"images":[...]} terminal submission
                     {"t":"reply","text":...}        final visible Pi text
                     {"t":"command","id":N,"command":"toggle"|"on"|"off"|"status"}
@@ -137,7 +138,8 @@ class WorkersUnavailable(RuntimeError):
 
 
 def worker_messages(home: Path, *, herdr_socket_path: Optional[str] = None,
-                    herdr_workspace_id: Optional[str] = None) -> list[str]:
+                    herdr_workspace_id: Optional[str] = None,
+                    herdr_session: Optional[str] = None) -> list[str]:
     try:
         from pi_telegram_workers import (
             WorkersUnavailable as IntegrationUnavailable,
@@ -150,6 +152,7 @@ def worker_messages(home: Path, *, herdr_socket_path: Optional[str] = None,
             home,
             herdr_socket_path=herdr_socket_path,
             herdr_workspace_id=herdr_workspace_id,
+            herdr_session=herdr_session,
         )
     except IntegrationUnavailable as exc:
         raise WorkersUnavailable(str(exc)) from exc
@@ -651,10 +654,11 @@ class MirrorBot:
     control_menus: "OrderedDict[str, ControlMenu]" = field(default_factory=OrderedDict)
     # The exact root authorized for the currently connected Pi peer.
     session_root: Optional[Path] = None
-    # Herdr's injected socket and workspace are an exact binding supplied by
-    # the authenticated Pi peer. They are never discovered by scanning hosts.
+    # Herdr's binding is supplied by the authenticated Pi peer. It is never
+    # discovered by scanning hosts.
     herdr_socket_path: Optional[str] = None
     herdr_workspace_id: Optional[str] = None
+    herdr_session: Optional[str] = None
     # Telegram retries can deliver the same update more than once. Reload is a
     # lifecycle action, so do not submit the same accepted chat message twice.
     reload_message_ids: "OrderedDict[int, None]" = field(default_factory=OrderedDict)
@@ -961,15 +965,14 @@ class MirrorBot:
         root = self.session_root
         snapshot = snapshot_identity(root)
         try:
-            if self.herdr_socket_path is None:
-                messages = await asyncio.to_thread(worker_messages, root)
-            else:
-                messages = await asyncio.to_thread(
-                    worker_messages,
-                    root,
-                    herdr_socket_path=self.herdr_socket_path,
-                    herdr_workspace_id=self.herdr_workspace_id,
-                )
+            binding: dict[str, str] = {}
+            if self.herdr_socket_path is not None:
+                binding["herdr_socket_path"] = self.herdr_socket_path
+                if self.herdr_workspace_id is not None:
+                    binding["herdr_workspace_id"] = self.herdr_workspace_id
+            if self.herdr_session is not None:
+                binding["herdr_session"] = self.herdr_session
+            messages = await asyncio.to_thread(worker_messages, root, **binding)
         except WorkersUnavailable as exc:
             await self.send(f"{snapshot}\n\nWorkers unavailable: {exc}.",
                             reply_to=reply_to)
@@ -1471,6 +1474,7 @@ class MirrorBot:
         self.session_root = None
         self.herdr_socket_path = None
         self.herdr_workspace_id = None
+        self.herdr_session = None
         for command_id, (waiting_generation, waiter) in list(self.command_waiters.items()):
             if waiting_generation == generation:
                 self.command_waiters.pop(command_id, None)
@@ -1512,6 +1516,7 @@ class MirrorBot:
         self.session_root = peer_session_root(writer)
         self.herdr_socket_path = None
         self.herdr_workspace_id = None
+        self.herdr_session = None
         log(f"mirroring for {peer_description(writer)}")
         await self.broadcast_state()
         # The queue drains once hello names what this session can render.
@@ -1553,6 +1558,7 @@ class MirrorBot:
             } if isinstance(features, list) else set()
             socket_path = frame.get("herdr_socket_path")
             workspace_id = frame.get("herdr_workspace_id")
+            session_name = frame.get("herdr_session")
             valid_socket_path = (
                 isinstance(socket_path, str)
                 and socket_path.startswith("/") and len(socket_path) <= 4096
@@ -1562,15 +1568,30 @@ class MirrorBot:
                 and 1 <= len(workspace_id) <= HERDR_WORKSPACE_ID_LIMIT
                 and HERDR_WORKSPACE_ID_PATTERN.fullmatch(workspace_id) is not None
             )
+            valid_session_name = (
+                isinstance(session_name, str)
+                and 1 <= len(session_name) <= HERDR_WORKSPACE_ID_LIMIT
+                and HERDR_WORKSPACE_ID_PATTERN.fullmatch(session_name) is not None
+            )
             if valid_socket_path:
                 self.herdr_socket_path = socket_path
                 self.herdr_workspace_id = workspace_id if valid_workspace_id else None
+                self.herdr_session = None
                 self.client_ready = valid_workspace_id
-            else:
-                self.herdr_socket_path = (
-                    "" if "herdr_socket_path" in frame else None
-                )
+            elif "herdr_socket_path" in frame:
+                self.herdr_socket_path = ""
                 self.herdr_workspace_id = None
+                self.herdr_session = None
+                self.client_ready = False
+            elif "herdr_session" in frame:
+                self.herdr_socket_path = None
+                self.herdr_workspace_id = None
+                self.herdr_session = session_name if valid_session_name else None
+                self.client_ready = valid_session_name
+            else:
+                self.herdr_socket_path = None
+                self.herdr_workspace_id = None
+                self.herdr_session = None
                 self.client_ready = True
             # State already went out when the connection was accepted.
             await self.pump()

@@ -247,6 +247,38 @@ def test_outside_herdr_pi_resolves_live_session_from_owned_metadata(tmp_path, mo
     assert "--session" in calls[0][0]
 
 
+def test_outside_herdr_pi_uses_connected_session_without_worker_metadata(
+    tmp_path, monkeypatch,
+):
+    home = firstmate_home(tmp_path)
+    snapshot = {
+        "workspaces": [
+            {"workspace_id": "primary-id", "label": "firstmate", "agent_status": "working"},
+            {"workspace_id": "worker-id", "label": "managed", "agent_status": "idle"},
+        ],
+        "panes": [{"workspace_id": "primary-id", "cwd": str(home)}],
+        "agents": [{"workspace_id": "worker-id", "agent": "codex", "agent_status": "idle"}],
+    }
+    calls = []
+
+    def runner(argv, *, timeout, env=None):
+        calls.append((tuple(argv), env))
+        assert argv == ["herdr", "api", "snapshot", "--session", "outside-session"]
+        return workers_module.CommandResult(json.dumps({
+            "result": {"type": "session_snapshot", "snapshot": snapshot},
+        }), 0)
+
+    monkeypatch.setattr(workers_module, "_capture_readonly", runner)
+    text = "\n".join(workers_module.worker_messages(
+        home, herdr_session="outside-session"
+    ))
+
+    assert "Firstmate - firstmate" in text
+    assert "Worker - managed" in text
+    assert len(calls) == 1
+    assert calls[0][1]["HERDR_SESSION"] == "outside-session"
+
+
 def test_multiple_metadata_sessions_are_unavailable_without_cross_session_leakage(
     tmp_path, monkeypatch,
 ):
@@ -808,6 +840,45 @@ def test_live_herdr_workspace_binding_must_match_snapshot(tmp_path, monkeypatch)
         workers_module.worker_messages(
             home, herdr_socket_path="named.sock", herdr_workspace_id="w999"
         )
+
+def test_telegram_workers_uses_connected_session_binding_without_worker_metadata(
+    tmp_path, monkeypatch,
+):
+    bot = load_path("pi_telegram_workers_bot_session_binding", BOT)
+    calls = []
+    worker_calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30, **kwargs):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    def fake_workers(home, **binding):
+        worker_calls.append((home, binding))
+        return ["Herdr workspaces\n\nFirstmate - primary"]
+
+    monkeypatch.setattr(bot, "worker_messages", fake_workers)
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.session_root = tmp_path
+
+    async def exercise():
+        await mirror.handle_frame({
+            "t": "hello", "features": [],
+            "herdr_session": "outside-session",
+        })
+        await mirror.handle_update({"message": {
+            "message_id": 12, "from": {"id": 7},
+            "chat": {"id": 8, "type": "private"}, "text": "/workers",
+        }})
+
+    asyncio.run(exercise())
+    assert worker_calls == [(tmp_path, {"herdr_session": "outside-session"})]
+    sent = [params for method, params in calls if method == "sendMessage"]
+    assert len(sent) == 1 and sent[0]["reply_parameters"]["message_id"] == 12
+
 
 def test_telegram_workers_uses_connected_herdr_binding_and_preserves_pairing(tmp_path, monkeypatch):
     bot = load_path("pi_telegram_workers_bot_herdr_binding", BOT)
