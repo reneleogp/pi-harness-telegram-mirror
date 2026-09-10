@@ -4,7 +4,9 @@ All notable user-visible changes to this package are recorded here.
 
 ## Unreleased
 
-No unreleased changes.
+### Changed
+
+- Updated Telegram `/workers` to list every open Herdr workspace in the connected Firstmate session, including Firstmate itself, while keeping non-Herdr task records as a clearly labeled fallback.
 
 ## [1.0.0] - 2026-09-09
 

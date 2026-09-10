@@ -109,7 +109,7 @@ In Telegram, these switch it and are never sent to Pi as conversation text:
 - `/agent_info` - show the connected owning Pi session's model, provider, effective thinking level, and context usage versus capacity.
 - `/change_model` - choose an available model for that live session.
 - `/change_thinking` - choose one of the current model's supported thinking levels.
-- `/workers` - show a labeled read-only snapshot of the connected Firstmate home's managed direct reports.
+- `/workers` - show a labeled read-only snapshot of the connected Firstmate session's open Herdr workspaces.
 - `/reload-pi-terminal` - reload the connected Pi terminal by running Pi's literal `/reload` command.
 
 The reload command is handled directly by the bot and extension and never becomes mirrored conversation text.
@@ -130,14 +130,16 @@ The response is headed `GPT quota` and contains one compact line per available w
 Unavailable quota is reported concisely, and no empty rows are shown for other providers.
 
 `/workers` is an optional on-demand read-only integration.
-It captures the exact Firstmate home authorized for the connected Pi session when the command is accepted, and lists that home's direct task metadata records rather than scanning Herdr or child homes.
+It captures the exact Firstmate home authorized for the connected Pi session and the exact Herdr binding announced by that authenticated Pi peer when the command is accepted.
+The binding is queried through the supported `session.snapshot` API: directly over the announced socket for Herdr panes, or through an explicit named-session API for outside-pane bindings.
+The result contains only live workspaces in that bound Herdr session.
 The response is labeled with a sanitized snapshot identity, so it remains clear which home it represents if the Pi session changes before the read completes.
-Each entry shows the recorded task title, the actual lifecycle value read from the task's exact recorded Herdr session and pane, and separately labeled current progress from Firstmate's reconciled `fm-crew-state.sh` helper.
-This distinction matters because an idle Herdr agent can still have unfinished work, while task progress can be blocked, awaiting approval, validating, or done.
-A non-Herdr worker reports Herdr as unknown with the reason `Not running in Herdr`, and missing tools, malformed records, absent endpoints, and timeouts produce concise unavailable or unknown results without changing other bot behavior.
-If no authorized Firstmate home is connected when the command is accepted, the bot reports that the worker view is unavailable.
-Persistent secondmates appear only as this home's direct-report identity; `/workers` never reconstructs their child fleet.
-Long fleets are split across bounded Telegram messages without dropping entries.
+Each open Herdr workspace is listed once with its Herdr label and rolled-up live state.
+The connected workspace is labeled `Firstmate`, a workspace containing a live Herdr agent is labeled `Worker`, and an open workspace without a live agent is labeled `Workspace` rather than being called an agent.
+Closed workspaces do not appear, and a missing or unavailable exact Herdr binding is reported as unavailable instead of falling back to stale task metadata.
+A Pi session outside a Herdr pane uses the exact Herdr session and workspace binding announced by that connected Pi session, with an explicit session flag rather than guessing `default`.
+A complete hello without Herdr binding retains the separate Firstmate task-record fallback, clearly labeled as task records rather than open Herdr workspaces; incomplete or unverifiable Herdr binding is reported as unavailable.
+Long lists are split across bounded Telegram messages without dropping entries.
 
 Telegram's own command menu cannot contain a space, so `/telegram on`, `/telegram off`, and `/telegram status` are also published as `/telegram_on`, `/telegram_off`, and `/telegram_status`.
 The menu publishes informational commands first in this order: `/token_usage`, `/agent_info`, and `/workers`.

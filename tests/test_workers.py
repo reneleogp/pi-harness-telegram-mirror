@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import os
+import socket
 import sys
 import threading
 
@@ -93,6 +95,186 @@ def fake_runner_for(workers, states, *, current=None):
 workers_module = load_path("pi_telegram_workers_tests", WORKERS)
 
 
+def live_snapshot():
+    return {
+        "version": "0.8.2",
+        "protocol": 20,
+        "workspaces": [
+            {"workspace_id": "w1", "label": "firstmate", "agent_status": "working"},
+            {"workspace_id": "w2", "label": "managed", "agent_status": "idle"},
+            {"workspace_id": "w3", "label": "shell", "agent_status": "unknown"},
+        ],
+        "agents": [
+            {"workspace_id": "w1", "agent": "pi", "agent_status": "working"},
+            {"workspace_id": "w2", "agent": "codex", "agent_status": "idle"},
+        ],
+    }
+
+
+def test_live_herdr_workspaces_include_primary_workers_and_shells_without_metadata(
+    tmp_path, monkeypatch,
+):
+    home = firstmate_home(tmp_path)
+    # This stale record must not turn the shell workspace into a worker.
+    (home / "state/stale.meta").write_text(herdr_meta("stale", "other", "w3:p1"))
+    monkeypatch.setattr(workers_module, "_herdr_snapshot", lambda _path: live_snapshot())
+
+    messages = workers_module.worker_messages(
+        home, herdr_socket_path=str(tmp_path / "named-herdr.sock"),
+        herdr_workspace_id="w1",
+    )
+    text = "\n".join(messages)
+    assert "Firstmate - firstmate" in text
+    assert "Worker - managed" in text
+    assert "Workspace - shell" in text
+    assert "Live agents: none" in text
+    assert "stale" not in text
+    assert text.index("Firstmate - firstmate") < text.index("Worker - managed") < text.index("Workspace - shell")
+
+
+def test_live_herdr_snapshot_uses_only_open_workspaces_and_does_not_leak_other_sessions(
+    tmp_path, monkeypatch,
+):
+    home = firstmate_home(tmp_path)
+    # Herdr's live session.snapshot contains open workspaces only. A closed
+    # workspace is absent from this source and therefore cannot be fabricated.
+    snapshot = live_snapshot()
+    def snapshot_for(path):
+        if path == "named-a.sock":
+            return snapshot
+        if path == "named-b.sock":
+            return {
+                **live_snapshot(),
+                "workspaces": [{"workspace_id": "other", "label": "other-session", "agent_status": "idle"}],
+                "agents": [],
+            }
+        raise workers_module.WorkersUnavailable("connected Herdr session is unavailable")
+
+    monkeypatch.setattr(workers_module, "_herdr_snapshot", snapshot_for)
+    # The exact socket is the session boundary. No ambient session or second
+    # named session is consulted.
+    text = "\n".join(workers_module.worker_messages(
+        home, herdr_socket_path="named-a.sock", herdr_workspace_id="w1"
+    ))
+    assert "closed" not in text
+    assert "other-session" not in text
+    with pytest.raises(workers_module.WorkersUnavailable):
+        workers_module.worker_messages(
+            home, herdr_socket_path="missing.sock",
+            herdr_workspace_id="w1",
+        )
+
+
+def test_live_herdr_workspace_pagination_is_bounded_and_ordered(tmp_path, monkeypatch):
+    home = firstmate_home(tmp_path)
+    workspaces = [
+        {"workspace_id": f"w{index}", "label": f"workspace-{index:02d}", "agent_status": "idle"}
+        for index in range(45)
+    ]
+    monkeypatch.setattr(workers_module, "_herdr_snapshot", lambda _path: {
+        "workspaces": workspaces, "agents": [],
+    })
+    messages = workers_module.worker_messages(
+        home, limit=700, herdr_socket_path="named.sock", herdr_workspace_id="w0"
+    )
+    assert len(messages) > 1
+    assert all(len(message.encode("utf-16-le")) // 2 <= 700 for message in messages)
+    combined = "\n".join(messages)
+    for index in range(45):
+        role = "Firstmate" if index == 0 else "Workspace"
+        assert combined.count(f"{role} - workspace-{index:02d}") == 1
+
+
+def test_live_herdr_api_snapshot_protocol_is_bounded_and_exact(tmp_path):
+    path = f"/tmp/pi-telegram-workers-{os.getpid()}.sock"
+    Path(path).unlink(missing_ok=True)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(path)
+    os.chmod(path, 0o600)
+    server.listen(1)
+    received = []
+
+    def serve():
+        connection, _ = server.accept()
+        with connection:
+            received.append(json.loads(connection.recv(4096).decode()))
+            connection.sendall(json.dumps({
+                "id": "pi-telegram-workers",
+                "result": {"type": "session_snapshot", "snapshot": live_snapshot()},
+            }).encode() + b"\n")
+
+    thread = threading.Thread(target=serve)
+    thread.start()
+    try:
+        snapshot = workers_module._herdr_snapshot(path)
+    finally:
+        thread.join(timeout=2)
+        server.close()
+        Path(path).unlink(missing_ok=True)
+    assert received == [{"id": "pi-telegram-workers", "method": "session.snapshot", "params": {}}]
+    assert snapshot["workspaces"][0]["workspace_id"] == "w1"
+
+
+def test_stale_worker_metadata_does_not_select_a_live_herdr_session(
+    tmp_path, monkeypatch,
+):
+    home = firstmate_home(tmp_path)
+    (home / "state/stale-record.meta").write_text(
+        herdr_meta("stale-record", "stale-session", "w1:p1")
+    )
+    runner, calls = fake_runner_for({}, {})
+    monkeypatch.setattr(workers_module, "_capture_readonly", runner)
+
+    assert workers_module.worker_messages(home) == ["No Firstmate task records."]
+    assert not any(call[0] == "herdr" for call in calls)
+
+
+def test_exact_connected_session_and_workspace_drive_live_enumeration(
+    tmp_path, monkeypatch,
+):
+    home = firstmate_home(tmp_path)
+    snapshot = {
+        "workspaces": [
+            {"workspace_id": "connected-id", "label": "captain", "agent_status": "working"},
+            {"workspace_id": "misleading-id", "label": "Firstmate", "agent_status": "idle"},
+            {"workspace_id": "worker-id", "label": "managed", "agent_status": "idle"},
+        ],
+        "agents": [{"workspace_id": "worker-id", "agent": "codex", "agent_status": "idle"}],
+    }
+    calls = []
+
+    def runner(argv, *, timeout, env=None):
+        calls.append((tuple(argv), env))
+        assert argv == ["herdr", "api", "snapshot", "--session", "outside-session"]
+        return workers_module.CommandResult(json.dumps({
+            "result": {"type": "session_snapshot", "snapshot": snapshot},
+        }), 0)
+
+    monkeypatch.setattr(workers_module, "_capture_readonly", runner)
+    text = "\n".join(workers_module.worker_messages(
+        home, herdr_session="outside-session", herdr_workspace_id="connected-id"
+    ))
+
+    assert "Firstmate - captain" in text
+    assert "Firstmate - Firstmate" not in text
+    assert "Worker - managed" in text
+    assert len(calls) == 1
+    assert calls[0][1]["HERDR_SESSION"] == "outside-session"
+
+
+def test_multiple_metadata_sessions_do_not_create_a_live_binding(
+    tmp_path, monkeypatch,
+):
+    home = firstmate_home(tmp_path)
+    (home / "state/one.meta").write_text(herdr_meta("one", "named-one", "w1:p1"))
+    (home / "state/two.meta").write_text(herdr_meta("two", "named-two", "w2:p1"))
+    runner, calls = fake_runner_for({}, {})
+    monkeypatch.setattr(workers_module, "_capture_readonly", runner)
+
+    assert workers_module.worker_messages(home) == ["No Firstmate task records."]
+    assert not any(call[0] == "herdr" for call in calls)
+
+
 def test_only_owned_exact_endpoints_are_queried_and_all_statuses_are_preserved(tmp_path, monkeypatch):
     home = firstmate_home(tmp_path)
     titles = {}
@@ -161,7 +343,8 @@ def test_live_done_worker_keeps_description_without_showing_unrelated_done_task(
         )
 
     monkeypatch.setattr(workers_module, "_capture_readonly", run)
-    message = workers_module.worker_messages(home)[0]
+    views = workers_module.collect_worker_views(home)
+    message = "\n".join(workers_module._entry(view) for view in views)
 
     assert "done-worker - Completed task description" in message
     assert "empty-worker - Description unavailable" in message
@@ -184,14 +367,14 @@ def test_unsafe_state_records_are_not_listed(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(workers_module, "_capture_readonly", runner)
 
-    assert workers_module.worker_messages(home) == ["No Firstmate-managed workers."]
+    assert workers_module.worker_messages(home) == ["No Firstmate task records."]
 
 
 def test_empty_fleet_and_non_herdr_task_are_honest(tmp_path, monkeypatch):
     home = firstmate_home(tmp_path)
     runner, _ = fake_runner_for({}, {})
     monkeypatch.setattr(workers_module, "_capture_readonly", runner)
-    assert workers_module.worker_messages(home) == ["No Firstmate-managed workers."]
+    assert workers_module.worker_messages(home) == ["No Firstmate task records."]
 
     (home / "state/tmux-worker.meta").write_text(
         "backend=tmux\nwindow=default:fm-tmux-worker\nworktree=/private/work/x\nproject=repo\n"
@@ -202,6 +385,7 @@ def test_empty_fleet_and_non_herdr_task_are_honest(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(workers_module, "_capture_readonly", runner)
     message = workers_module.worker_messages(home)[0]
+    assert message.startswith("Firstmate task records")
     assert "Herdr: unknown (Not running in Herdr)" in message
     assert "Progress: paused - awaiting dependency" in message
     assert not any(call[0] == "herdr" for call in calls)
@@ -281,7 +465,7 @@ def test_task_row_count_mismatch_is_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(workers_module, "_capture_readonly", mismatched)
 
     with pytest.raises(workers_module.WorkersUnavailable, match="task records"):
-        workers_module.worker_messages(home)
+        workers_module.collect_worker_views(home)
 
 
 def test_duplicate_task_rows_are_unavailable(tmp_path, monkeypatch):
@@ -300,7 +484,7 @@ def test_duplicate_task_rows_are_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(workers_module, "_capture_readonly", duplicate)
 
     with pytest.raises(workers_module.WorkersUnavailable, match="task records"):
-        workers_module.worker_messages(home)
+        workers_module.collect_worker_views(home)
 
 
 def test_firstmate_paths_reject_symlinked_parent(tmp_path):
@@ -332,7 +516,7 @@ def test_malformed_task_rows_are_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(workers_module, "_capture_readonly", malformed)
 
     with pytest.raises(workers_module.WorkersUnavailable, match="task records"):
-        workers_module.worker_messages(home)
+        workers_module.collect_worker_views(home)
 
 
 def test_unavailable_task_query_does_not_claim_stale_workers(tmp_path, monkeypatch):
@@ -345,7 +529,7 @@ def test_unavailable_task_query_does_not_claim_stale_workers(tmp_path, monkeypat
     monkeypatch.setattr(workers_module, "_capture_readonly", unavailable)
 
     with pytest.raises(workers_module.WorkersUnavailable, match="task records"):
-        workers_module.worker_messages(home)
+        workers_module.collect_worker_views(home)
 
 
 def test_reused_herdr_endpoint_is_excluded(tmp_path, monkeypatch):
@@ -360,7 +544,7 @@ def test_reused_herdr_endpoint_is_excluded(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(workers_module, "_capture_readonly", runner)
 
-    assert workers_module.worker_messages(home) == ["No Firstmate-managed workers."]
+    assert workers_module.collect_worker_views(home) == []
 
 
 def test_stale_status_history_is_not_read_and_current_state_failures_are_bounded(tmp_path, monkeypatch):
@@ -375,7 +559,8 @@ def test_stale_status_history_is_not_read_and_current_state_failures_are_bounded
     view = workers_module.collect_worker_views(home)[0]
     assert view.progress == "unknown"
     assert view.progress_note == "current-state response malformed"
-    assert "stale historical gate" not in workers_module.worker_messages(home)[0]
+    message = workers_module._entry(workers_module.collect_worker_views(home)[0])
+    assert "stale historical gate" not in message
 
 
 def test_output_spans_messages_without_dropping_workers(tmp_path, monkeypatch):
@@ -385,7 +570,12 @@ def test_output_spans_messages_without_dropping_workers(tmp_path, monkeypatch):
     for index in range(45):
         name = f"worker-{index:02d}"
         pane = f"w{index}:p1"
-        (home / "state" / f"{name}.meta").write_text(herdr_meta(name, "fleet", pane))
+        (home / "state" / f"{name}.meta").write_text(
+            "backend=tmux\n"
+            f"window=default:{name}\n"
+            f"worktree=/private/work/{name}\n"
+            "project=repo\n"
+        )
         titles[name] = "A concrete task description " + ("x" * 120)
         native[pane] = "idle"
     runner, _ = fake_runner_for(titles, native)
@@ -477,6 +667,36 @@ def test_pairing_denial_and_standalone_mode_never_query_workers(tmp_path, monkey
     assert not mirror.queue
 
 
+def test_workers_waits_for_hello_before_using_task_record_fallback(tmp_path, monkeypatch):
+    bot = load_path("pi_telegram_workers_before_hello_bot", BOT)
+    calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    def unexpected_worker_query(_home):
+        raise AssertionError("workers queried before hello completed")
+
+    monkeypatch.setattr(bot, "worker_messages", unexpected_worker_query)
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.client_ready = False
+    mirror.session_root = tmp_path
+
+    asyncio.run(mirror.handle_update({"message": {
+        "message_id": 3,
+        "from": {"id": 7},
+        "chat": {"id": 8, "type": "private"},
+        "text": "/workers",
+    }}))
+
+    assert calls[-1][1]["text"] == "Workers unavailable: no connected Firstmate home."
+
+
 def test_owner_helper_reveals_only_the_live_exact_peers_root(tmp_path, monkeypatch, capsys):
     owner = load_path("pi_telegram_workers_owner", OWNER)
     record = {"pid": 12, "uid": 34, "root": str(tmp_path)}
@@ -548,6 +768,159 @@ def test_workers_snapshot_survives_session_switch(tmp_path, monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("workspace_id", [None, "", "bad workspace", 17])
+@pytest.mark.parametrize("socket_path", [
+    "/private/herdr/sessions/connected/herdr.sock", "", "relative.sock",
+])
+def test_telegram_workers_rejects_partial_herdr_binding_before_ready(
+    tmp_path, monkeypatch, workspace_id, socket_path,
+):
+    bot = load_path("pi_telegram_workers_partial_binding_bot", BOT)
+    calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30, **kwargs):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    monkeypatch.setattr(
+        bot, "worker_messages",
+        lambda _home, **_binding: (_ for _ in ()).throw(
+            AssertionError("workers queried with an incomplete Herdr binding")
+        ),
+    )
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.session_root = tmp_path
+    hello = {
+        "t": "hello",
+        "features": [],
+        "herdr_socket_path": socket_path,
+    }
+    if workspace_id is not None:
+        hello["herdr_workspace_id"] = workspace_id
+
+    async def exercise():
+        await mirror.handle_frame(hello)
+        await mirror.handle_update({"message": {
+            "message_id": 11,
+            "from": {"id": 7},
+            "chat": {"id": 8, "type": "private"}, "text": "/workers",
+        }})
+
+    asyncio.run(exercise())
+    assert not mirror.client_ready
+    assert calls[-1][1]["text"] == "Workers unavailable: no connected Firstmate home."
+
+
+def test_live_herdr_workspace_binding_must_match_snapshot(tmp_path, monkeypatch):
+    home = firstmate_home(tmp_path)
+    monkeypatch.setattr(workers_module, "_herdr_snapshot", lambda _path: {
+        "workspaces": [{"workspace_id": "w1", "label": "primary", "agent_status": "working"}],
+        "agents": [],
+    })
+
+    with pytest.raises(workers_module.WorkersUnavailable, match="workspace"):
+        workers_module.worker_messages(
+            home, herdr_socket_path="named.sock", herdr_workspace_id="w999"
+        )
+
+def test_telegram_workers_uses_connected_session_binding_without_worker_metadata(
+    tmp_path, monkeypatch,
+):
+    bot = load_path("pi_telegram_workers_bot_session_binding", BOT)
+    calls = []
+    worker_calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30, **kwargs):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    def fake_workers(home, **binding):
+        worker_calls.append((home, binding))
+        return ["Herdr workspaces\n\nFirstmate - primary"]
+
+    monkeypatch.setattr(bot, "worker_messages", fake_workers)
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.session_root = tmp_path
+
+    async def exercise():
+        await mirror.handle_frame({
+            "t": "hello", "features": [],
+            "herdr_session": "outside-session",
+            "herdr_workspace_id": "connected-id",
+        })
+        await mirror.handle_update({"message": {
+            "message_id": 12, "from": {"id": 7},
+            "chat": {"id": 8, "type": "private"}, "text": "/workers",
+        }})
+
+    asyncio.run(exercise())
+    assert worker_calls == [(
+        tmp_path,
+        {
+            "herdr_session": "outside-session",
+            "herdr_workspace_id": "connected-id",
+        },
+    )]
+    sent = [params for method, params in calls if method == "sendMessage"]
+    assert len(sent) == 1 and sent[0]["reply_parameters"]["message_id"] == 12
+
+
+def test_telegram_workers_uses_connected_herdr_binding_and_preserves_pairing(tmp_path, monkeypatch):
+    bot = load_path("pi_telegram_workers_bot_herdr_binding", BOT)
+    calls = []
+    worker_calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30, **kwargs):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    def fake_workers(home, **binding):
+        worker_calls.append((home, binding))
+        return ["Herdr workspaces\n\nFirstmate - primary"]
+
+    monkeypatch.setattr(bot, "worker_messages", fake_workers)
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.session_root = tmp_path
+
+    async def exercise():
+        await mirror.handle_frame({
+            "t": "hello", "features": [],
+            "herdr_socket_path": "/private/herdr/sessions/connected/herdr.sock",
+            "herdr_workspace_id": "w1",
+        })
+        await mirror.handle_update({"message": {
+            "message_id": 9, "from": {"id": 7},
+            "chat": {"id": 8, "type": "private"}, "text": "/workers",
+        }})
+        await mirror.handle_update({"message": {
+            "message_id": 10, "from": {"id": 99},
+            "chat": {"id": 8, "type": "private"}, "text": "/workers",
+        }})
+
+    asyncio.run(exercise())
+    assert worker_calls == [(
+        tmp_path,
+        {
+            "herdr_socket_path": "/private/herdr/sessions/connected/herdr.sock",
+            "herdr_workspace_id": "w1",
+        },
+    )]
+    sent = [params for method, params in calls if method == "sendMessage"]
+    assert len(sent) == 1 and sent[0]["reply_parameters"]["message_id"] == 9
+
+
 def test_workers_command_uses_safe_transport_menu_and_multiple_messages(tmp_path, monkeypatch):
     bot = load_path("pi_telegram_workers_bot_messages", BOT)
     calls = []
@@ -562,14 +935,18 @@ def test_workers_command_uses_safe_transport_menu_and_multiple_messages(tmp_path
         bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
     )
     mirror.client = object()
-    mirror.client_ready = True
     mirror.session_root = tmp_path
-    asyncio.run(mirror.handle_update({"message": {
-        "message_id": 3,
-        "from": {"id": 7},
-        "chat": {"id": 8, "type": "private"},
-        "text": "/workers",
-    }}))
+
+    async def exercise():
+        await mirror.handle_frame({"t": "hello", "features": []})
+        await mirror.handle_update({"message": {
+            "message_id": 3,
+            "from": {"id": 7},
+            "chat": {"id": 8, "type": "private"},
+            "text": "/workers",
+        }})
+
+    asyncio.run(exercise())
     assert [params["text"] for method, params in calls if method == "sendMessage"] == [
         f"{bot.snapshot_identity(tmp_path)}\n\npage one", "page two"
     ]

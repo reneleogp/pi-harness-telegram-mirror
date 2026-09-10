@@ -15,12 +15,12 @@ This checklist records the standalone behavior covered by the package and the va
 - [x] macOS LaunchAgent and Linux systemd user-service generation, installation, status, and removal paths.
 - [x] Explicit migration of legacy token, pairing, and settings without changing the legacy directory.
 - [x] Concise GPT quota reporting through the local Codex app-server without reading credentials or making inference calls.
-- [x] Normal startup and mirror behavior contain no Firstmate dependency; the optional `/workers` command is the only bounded, read-only integration for an authorized connected Firstmate home.
+- [x] Normal startup and mirror behavior contain no Firstmate dependency; the optional `/workers` command is the only bounded, read-only integration for an authorized connected Firstmate home and its exact live Herdr session.
 
 ## Validation evidence
 
-- `tests/run.sh` passed: 167 test executions (71 combined, 35 Telegram, 9 package, and 52 combined through the non-live E2E wrapper).
-- `python3 -m pytest -q` passed: 71 tests.
+- `tests/run.sh` passed: 178 test executions (82 combined, 35 Telegram, 9 package, and 52 combined through the non-live E2E wrapper).
+- `python3 -m pytest -q` passed: 82 tests.
 - `python3 -m pytest -q tests/test_behavior_matrix.py` passed: 8 tests.
 - `python3 -m pytest -q tests/test_package.py` passed: 9 tests.
 - `python3 -m pytest -q tests/test_telegram.py` passed: 35 tests.

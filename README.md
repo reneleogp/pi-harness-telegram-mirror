@@ -72,7 +72,7 @@ The extension registers `/telegram` and `/telegram-settings`; the latter control
 Telegram commands are `/telegram_on`, `/telegram_off`, `/telegram_status`, `/token_usage`, `/agent_info`, `/change_model`, `/change_thinking`, `/workers`, and `/reload-pi-terminal` (plus spaced forms where applicable).
 See [docs/telegram.md](docs/telegram.md) for agent-control behavior, ownership, confirmation, and worker status details.
 `/token_usage` reports concise GPT quota windows in the paired private chat.
-`/workers` provides a labeled, read-only worker snapshot; see [docs/telegram.md](docs/telegram.md) for its ownership and status behavior.
+`/workers` provides a labeled, read-only snapshot of every open Herdr workspace visible to the connected Firstmate session, including Firstmate itself; see [docs/telegram.md](docs/telegram.md) for its ownership and status behavior.
 `/reload_pi_terminal` is the Telegram menu alias for `/reload-pi-terminal`.
 Text is in-memory FIFO with bounded frames and one session.
 Accepted messages optionally receive `Pi · Sent to Pi.`.
