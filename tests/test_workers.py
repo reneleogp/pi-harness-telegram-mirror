@@ -215,6 +215,51 @@ def test_live_herdr_api_snapshot_protocol_is_bounded_and_exact(tmp_path):
     assert snapshot["workspaces"][0]["workspace_id"] == "w1"
 
 
+def test_outside_herdr_pi_resolves_live_session_from_owned_metadata(tmp_path, monkeypatch):
+    home = firstmate_home(tmp_path)
+    (home / "state/live-record.meta").write_text(
+        herdr_meta("live-record", "named-session", "w2:p1")
+    )
+    snapshot = {
+        "workspaces": [
+            {"workspace_id": "w1", "label": "firstmate", "agent_status": "working"},
+            {"workspace_id": "w2", "label": "managed", "agent_status": "idle"},
+            {"workspace_id": "w3", "label": "shell", "agent_status": "unknown"},
+        ],
+        "panes": [{"workspace_id": "w1", "cwd": str(home)}],
+        "agents": [{"workspace_id": "w2", "agent": "codex", "agent_status": "idle"}],
+    }
+    calls = []
+
+    def runner(argv, *, timeout, env=None):
+        calls.append((tuple(argv), env))
+        assert argv == ["herdr", "api", "snapshot", "--session", "named-session"]
+        return workers_module.CommandResult(json.dumps({
+            "result": {"type": "session_snapshot", "snapshot": snapshot},
+        }), 0)
+
+    monkeypatch.setattr(workers_module, "_capture_readonly", runner)
+    text = "\n".join(workers_module.worker_messages(home))
+    assert "Firstmate - firstmate" in text
+    assert "Worker - managed" in text
+    assert "Workspace - shell" in text
+    assert len(calls) == 1 and calls[0][1]["HERDR_SESSION"] == "named-session"
+    assert "--session" in calls[0][0]
+
+
+def test_multiple_metadata_sessions_are_unavailable_without_cross_session_leakage(
+    tmp_path, monkeypatch,
+):
+    home = firstmate_home(tmp_path)
+    (home / "state/one.meta").write_text(herdr_meta("one", "named-one", "w1:p1"))
+    (home / "state/two.meta").write_text(herdr_meta("two", "named-two", "w2:p1"))
+    monkeypatch.setattr(workers_module, "_capture_readonly", lambda *args, **kwargs: (
+        pytest.fail("ambiguous metadata must not query either session")
+    ))
+    with pytest.raises(workers_module.WorkersUnavailable, match="multiple"):
+        workers_module.worker_messages(home)
+
+
 def test_only_owned_exact_endpoints_are_queried_and_all_statuses_are_preserved(tmp_path, monkeypatch):
     home = firstmate_home(tmp_path)
     titles = {}
@@ -283,7 +328,8 @@ def test_live_done_worker_keeps_description_without_showing_unrelated_done_task(
         )
 
     monkeypatch.setattr(workers_module, "_capture_readonly", run)
-    message = workers_module.worker_messages(home)[0]
+    views = workers_module.collect_worker_views(home)
+    message = "\n".join(workers_module._entry(view) for view in views)
 
     assert "done-worker - Completed task description" in message
     assert "empty-worker - Description unavailable" in message
@@ -404,7 +450,7 @@ def test_task_row_count_mismatch_is_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(workers_module, "_capture_readonly", mismatched)
 
     with pytest.raises(workers_module.WorkersUnavailable, match="task records"):
-        workers_module.worker_messages(home)
+        workers_module.collect_worker_views(home)
 
 
 def test_duplicate_task_rows_are_unavailable(tmp_path, monkeypatch):
@@ -423,7 +469,7 @@ def test_duplicate_task_rows_are_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(workers_module, "_capture_readonly", duplicate)
 
     with pytest.raises(workers_module.WorkersUnavailable, match="task records"):
-        workers_module.worker_messages(home)
+        workers_module.collect_worker_views(home)
 
 
 def test_firstmate_paths_reject_symlinked_parent(tmp_path):
@@ -455,7 +501,7 @@ def test_malformed_task_rows_are_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(workers_module, "_capture_readonly", malformed)
 
     with pytest.raises(workers_module.WorkersUnavailable, match="task records"):
-        workers_module.worker_messages(home)
+        workers_module.collect_worker_views(home)
 
 
 def test_unavailable_task_query_does_not_claim_stale_workers(tmp_path, monkeypatch):
@@ -468,7 +514,7 @@ def test_unavailable_task_query_does_not_claim_stale_workers(tmp_path, monkeypat
     monkeypatch.setattr(workers_module, "_capture_readonly", unavailable)
 
     with pytest.raises(workers_module.WorkersUnavailable, match="task records"):
-        workers_module.worker_messages(home)
+        workers_module.collect_worker_views(home)
 
 
 def test_reused_herdr_endpoint_is_excluded(tmp_path, monkeypatch):
@@ -483,7 +529,7 @@ def test_reused_herdr_endpoint_is_excluded(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(workers_module, "_capture_readonly", runner)
 
-    assert workers_module.worker_messages(home) == ["No Firstmate task records."]
+    assert workers_module.collect_worker_views(home) == []
 
 
 def test_stale_status_history_is_not_read_and_current_state_failures_are_bounded(tmp_path, monkeypatch):
@@ -498,7 +544,8 @@ def test_stale_status_history_is_not_read_and_current_state_failures_are_bounded
     view = workers_module.collect_worker_views(home)[0]
     assert view.progress == "unknown"
     assert view.progress_note == "current-state response malformed"
-    assert "stale historical gate" not in workers_module.worker_messages(home)[0]
+    message = workers_module._entry(workers_module.collect_worker_views(home)[0])
+    assert "stale historical gate" not in message
 
 
 def test_output_spans_messages_without_dropping_workers(tmp_path, monkeypatch):
@@ -508,7 +555,12 @@ def test_output_spans_messages_without_dropping_workers(tmp_path, monkeypatch):
     for index in range(45):
         name = f"worker-{index:02d}"
         pane = f"w{index}:p1"
-        (home / "state" / f"{name}.meta").write_text(herdr_meta(name, "fleet", pane))
+        (home / "state" / f"{name}.meta").write_text(
+            "backend=tmux\n"
+            f"window=default:{name}\n"
+            f"worktree=/private/work/{name}\n"
+            "project=repo\n"
+        )
         titles[name] = "A concrete task description " + ("x" * 120)
         native[pane] = "idle"
     runner, _ = fake_runner_for(titles, native)

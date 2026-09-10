@@ -136,7 +136,8 @@ The response is labeled with a sanitized snapshot identity, so it remains clear 
 Each open Herdr workspace is listed once with its Herdr label and rolled-up live state.
 The connected workspace is labeled `Firstmate`, a workspace containing a live Herdr agent is labeled `Worker`, and an open workspace without a live agent is labeled `Workspace` rather than being called an agent.
 Closed workspaces do not appear, and a missing or unavailable exact Herdr socket is reported as unavailable instead of falling back to stale task metadata.
-A Pi session outside Herdr retains the separate Firstmate task-record fallback, clearly labeled as task records rather than open Herdr workspaces.
+A Pi session outside a Herdr pane resolves the exact session from its owned Herdr endpoint metadata with an explicit session flag rather than guessing `default`.
+If no exact Herdr binding exists, it retains the separate Firstmate task-record fallback, clearly labeled as task records rather than open Herdr workspaces.
 Long lists are split across bounded Telegram messages without dropping entries.
 
 Telegram's own command menu cannot contain a space, so `/telegram on`, `/telegram off`, and `/telegram status` are also published as `/telegram_on`, `/telegram_off`, and `/telegram_status`.
