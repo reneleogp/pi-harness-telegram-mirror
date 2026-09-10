@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded, read-only Firstmate worker status integration for /workers."""
+"""Bounded, read-only Firstmate and Herdr status integration for /workers."""
 from __future__ import annotations
 
 import csv
@@ -41,7 +41,7 @@ SECRET_PATTERN = re.compile(
 
 
 class WorkersUnavailable(RuntimeError):
-    """The connected session cannot provide a safe Firstmate worker view."""
+    """The connected session cannot provide a safe Firstmate workspace view."""
 
 
 @dataclass(frozen=True)

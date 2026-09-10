@@ -109,7 +109,6 @@ import plistlib
 import re
 import secrets
 import shlex
-import shutil
 import signal
 import socket
 import struct
