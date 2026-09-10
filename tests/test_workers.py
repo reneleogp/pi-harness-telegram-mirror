@@ -599,6 +599,36 @@ def test_pairing_denial_and_standalone_mode_never_query_workers(tmp_path, monkey
     assert not mirror.queue
 
 
+def test_workers_waits_for_hello_before_using_task_record_fallback(tmp_path, monkeypatch):
+    bot = load_path("pi_telegram_workers_before_hello_bot", BOT)
+    calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    def unexpected_worker_query(_home):
+        raise AssertionError("workers queried before hello completed")
+
+    monkeypatch.setattr(bot, "worker_messages", unexpected_worker_query)
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.client_ready = False
+    mirror.session_root = tmp_path
+
+    asyncio.run(mirror.handle_update({"message": {
+        "message_id": 3,
+        "from": {"id": 7},
+        "chat": {"id": 8, "type": "private"},
+        "text": "/workers",
+    }}))
+
+    assert calls[-1][1]["text"] == "Workers unavailable: no connected Firstmate home."
+
+
 def test_owner_helper_reveals_only_the_live_exact_peers_root(tmp_path, monkeypatch, capsys):
     owner = load_path("pi_telegram_workers_owner", OWNER)
     record = {"pid": 12, "uid": 34, "root": str(tmp_path)}

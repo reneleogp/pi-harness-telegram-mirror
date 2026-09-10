@@ -950,7 +950,8 @@ class MirrorBot:
             log(f"could not persist the confirmations setting: {exc}")
 
     async def send_workers(self, reply_to: int) -> None:
-        if not self.connected or self.session_root is None:
+        if (not self.connected or not self.client_ready
+                or self.session_root is None):
             await self.send("Workers unavailable: no connected Firstmate home.",
                             reply_to=reply_to)
             return
