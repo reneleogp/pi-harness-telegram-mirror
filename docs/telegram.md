@@ -130,12 +130,13 @@ The response is headed `GPT quota` and contains one compact line per available w
 Unavailable quota is reported concisely, and no empty rows are shown for other providers.
 
 `/workers` is an optional on-demand read-only integration.
-It captures the exact Firstmate home authorized for the connected Pi session and the exact Herdr socket and workspace announced by that authenticated Pi peer when the command is accepted.
-The Herdr socket is queried through the supported `session.snapshot` API, so the result contains only live workspaces in that connected named Herdr session.
+It captures the exact Firstmate home authorized for the connected Pi session and the exact Herdr binding announced by that authenticated Pi peer when the command is accepted.
+The binding is queried through the supported `session.snapshot` API: directly over the announced socket for Herdr panes, or through an explicit named-session API for outside-pane bindings.
+The result contains only live workspaces in that bound Herdr session.
 The response is labeled with a sanitized snapshot identity, so it remains clear which home it represents if the Pi session changes before the read completes.
 Each open Herdr workspace is listed once with its Herdr label and rolled-up live state.
 The connected workspace is labeled `Firstmate`, a workspace containing a live Herdr agent is labeled `Worker`, and an open workspace without a live agent is labeled `Workspace` rather than being called an agent.
-Closed workspaces do not appear, and a missing or unavailable exact Herdr socket is reported as unavailable instead of falling back to stale task metadata.
+Closed workspaces do not appear, and a missing or unavailable exact Herdr binding is reported as unavailable instead of falling back to stale task metadata.
 A Pi session outside a Herdr pane uses the exact Herdr session and workspace binding announced by that connected Pi session, with an explicit session flag rather than guessing `default`.
 A complete hello without Herdr binding retains the separate Firstmate task-record fallback, clearly labeled as task records rather than open Herdr workspaces; incomplete or unverifiable Herdr binding is reported as unavailable.
 Long lists are split across bounded Telegram messages without dropping entries.
