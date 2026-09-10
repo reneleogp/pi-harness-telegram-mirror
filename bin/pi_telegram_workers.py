@@ -393,7 +393,7 @@ def _herdr_snapshot(socket_path: str) -> dict[str, object]:
 
 
 def _herdr_cli_snapshot(session: str) -> dict[str, object]:
-    """Read a metadata-bound named session with an explicit CLI flag."""
+    """Read an explicitly bound named session with an explicit CLI flag."""
     if not isinstance(session, str) or not ENDPOINT_ATOM_PATTERN.fullmatch(session):
         raise WorkersUnavailable("Firstmate Herdr session identity is invalid")
     env = dict(os.environ)
@@ -418,51 +418,6 @@ def _herdr_cli_snapshot(session: str) -> dict[str, object]:
     if not isinstance(snapshot, dict):
         raise WorkersUnavailable("Herdr snapshot is malformed")
     return snapshot
-
-
-def _infer_primary_workspace(snapshot: dict[str, object], home: Path) -> str:
-    """Resolve Firstmate's workspace from supported live workspace provenance."""
-    try:
-        canonical_home = home.resolve(strict=True)
-    except OSError as exc:
-        raise WorkersUnavailable("connected Firstmate home is unavailable") from exc
-    candidates: set[str] = set()
-    raw_workspaces = snapshot.get("workspaces")
-    raw_panes = snapshot.get("panes")
-    if isinstance(raw_workspaces, list):
-        for raw_workspace in raw_workspaces:
-            if not isinstance(raw_workspace, dict):
-                continue
-            worktree = raw_workspace.get("worktree")
-            if isinstance(worktree, dict):
-                checkout = worktree.get("checkout_path")
-                workspace_id = raw_workspace.get("workspace_id")
-                if (isinstance(checkout, str) and isinstance(workspace_id, str)
-                        and Path(checkout).resolve(strict=False) == canonical_home):
-                    candidates.add(workspace_id)
-    if isinstance(raw_panes, list):
-        for raw_pane in raw_panes:
-            if not isinstance(raw_pane, dict):
-                continue
-            workspace_id = raw_pane.get("workspace_id")
-            for key in ("cwd", "foreground_cwd"):
-                cwd = raw_pane.get(key)
-                if (isinstance(cwd, str) and isinstance(workspace_id, str)
-                        and Path(cwd).resolve(strict=False) == canonical_home):
-                    candidates.add(workspace_id)
-    if len(candidates) == 1:
-        return next(iter(candidates))
-    if isinstance(raw_workspaces, list):
-        labeled = [
-            raw_workspace.get("workspace_id") for raw_workspace in raw_workspaces
-            if isinstance(raw_workspace, dict)
-            and isinstance(raw_workspace.get("workspace_id"), str)
-            and isinstance(raw_workspace.get("label"), str)
-            and raw_workspace["label"].casefold() == "firstmate"
-        ]
-        if len(labeled) == 1:
-            return labeled[0]
-    raise WorkersUnavailable("connected Firstmate workspace is unavailable")
 
 
 def _live_workspaces_from_snapshot(
@@ -531,18 +486,6 @@ def _live_workspaces(socket_path: str, primary_workspace_id: Optional[str]) -> l
     return _live_workspaces_from_snapshot(
         _herdr_snapshot(socket_path), primary_workspace_id,
     )
-
-
-def _herdr_session_from_metadata(state: Path) -> Optional[str]:
-    sessions = {
-        worker.target_session
-        for worker in _managed_workers(state)
-        if worker.backend == "herdr" and worker.metadata_valid
-        and not worker.remote and worker.target_session
-    }
-    if len(sessions) > 1:
-        raise WorkersUnavailable("multiple Firstmate Herdr sessions are ambiguous")
-    return next(iter(sessions), None)
 
 
 def _live_entry(workspace: LiveWorkspace) -> str:
@@ -718,22 +661,16 @@ def worker_messages(home: Path, limit: int = WORKER_MESSAGE_LIMIT, *,
         return _paginate([_live_entry(workspace) for workspace in workspaces],
                          "Herdr workspaces", limit)
 
-    # Firstmate itself may be a normal Pi process launched outside a Herdr pane.
-    # Prefer the exact session binding announced by that connected Pi session.
-    session = (herdr_session if herdr_session is not None
-               else _herdr_session_from_metadata(state))
-    if session is not None:
-        snapshot = _herdr_cli_snapshot(session)
-        primary = _infer_primary_workspace(snapshot, home)
-        workspaces = _live_workspaces_from_snapshot(snapshot, primary)
+    if herdr_session is not None or herdr_workspace_id is not None:
+        if herdr_session is None or herdr_workspace_id is None:
+            raise WorkersUnavailable("connected Herdr binding is incomplete")
+        snapshot = _herdr_cli_snapshot(herdr_session)
+        workspaces = _live_workspaces_from_snapshot(snapshot, herdr_workspace_id)
         if not workspaces:
             return ["No open Herdr workspaces."]
         return _paginate([_live_entry(workspace) for workspace in workspaces],
                          "Herdr workspaces", limit)
 
-    # A Pi session outside Herdr with no exact Herdr binding has no live
-    # workspace authority. Keep the historical task view as a clearly separate
-    # fallback, never as a claim about open Herdr contexts.
     views = collect_worker_views(home)
     if not views:
         return ["No Firstmate task records."]

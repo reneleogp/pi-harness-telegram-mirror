@@ -968,8 +968,8 @@ class MirrorBot:
             binding: dict[str, str] = {}
             if self.herdr_socket_path is not None:
                 binding["herdr_socket_path"] = self.herdr_socket_path
-                if self.herdr_workspace_id is not None:
-                    binding["herdr_workspace_id"] = self.herdr_workspace_id
+            if self.herdr_workspace_id is not None:
+                binding["herdr_workspace_id"] = self.herdr_workspace_id
             if self.herdr_session is not None:
                 binding["herdr_session"] = self.herdr_session
             messages = await asyncio.to_thread(worker_messages, root, **binding)
@@ -1583,11 +1583,11 @@ class MirrorBot:
                 self.herdr_workspace_id = None
                 self.herdr_session = None
                 self.client_ready = False
-            elif "herdr_session" in frame:
+            elif "herdr_session" in frame or "herdr_workspace_id" in frame:
                 self.herdr_socket_path = None
-                self.herdr_workspace_id = None
+                self.herdr_workspace_id = workspace_id if valid_workspace_id else None
                 self.herdr_session = session_name if valid_session_name else None
-                self.client_ready = valid_session_name
+                self.client_ready = valid_session_name and valid_workspace_id
             else:
                 self.herdr_socket_path = None
                 self.herdr_workspace_id = None

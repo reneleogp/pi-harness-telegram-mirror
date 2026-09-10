@@ -215,48 +215,30 @@ def test_live_herdr_api_snapshot_protocol_is_bounded_and_exact(tmp_path):
     assert snapshot["workspaces"][0]["workspace_id"] == "w1"
 
 
-def test_outside_herdr_pi_resolves_live_session_from_owned_metadata(tmp_path, monkeypatch):
+def test_stale_worker_metadata_does_not_select_a_live_herdr_session(
+    tmp_path, monkeypatch,
+):
     home = firstmate_home(tmp_path)
-    (home / "state/live-record.meta").write_text(
-        herdr_meta("live-record", "named-session", "w2:p1")
+    (home / "state/stale-record.meta").write_text(
+        herdr_meta("stale-record", "stale-session", "w1:p1")
     )
-    snapshot = {
-        "workspaces": [
-            {"workspace_id": "w1", "label": "firstmate", "agent_status": "working"},
-            {"workspace_id": "w2", "label": "managed", "agent_status": "idle"},
-            {"workspace_id": "w3", "label": "shell", "agent_status": "unknown"},
-        ],
-        "panes": [{"workspace_id": "w1", "cwd": str(home)}],
-        "agents": [{"workspace_id": "w2", "agent": "codex", "agent_status": "idle"}],
-    }
-    calls = []
-
-    def runner(argv, *, timeout, env=None):
-        calls.append((tuple(argv), env))
-        assert argv == ["herdr", "api", "snapshot", "--session", "named-session"]
-        return workers_module.CommandResult(json.dumps({
-            "result": {"type": "session_snapshot", "snapshot": snapshot},
-        }), 0)
-
+    runner, calls = fake_runner_for({}, {})
     monkeypatch.setattr(workers_module, "_capture_readonly", runner)
-    text = "\n".join(workers_module.worker_messages(home))
-    assert "Firstmate - firstmate" in text
-    assert "Worker - managed" in text
-    assert "Workspace - shell" in text
-    assert len(calls) == 1 and calls[0][1]["HERDR_SESSION"] == "named-session"
-    assert "--session" in calls[0][0]
+
+    assert workers_module.worker_messages(home) == ["No Firstmate task records."]
+    assert not any(call[0] == "herdr" for call in calls)
 
 
-def test_outside_herdr_pi_uses_connected_session_without_worker_metadata(
+def test_exact_connected_session_and_workspace_drive_live_enumeration(
     tmp_path, monkeypatch,
 ):
     home = firstmate_home(tmp_path)
     snapshot = {
         "workspaces": [
-            {"workspace_id": "primary-id", "label": "firstmate", "agent_status": "working"},
+            {"workspace_id": "connected-id", "label": "captain", "agent_status": "working"},
+            {"workspace_id": "misleading-id", "label": "Firstmate", "agent_status": "idle"},
             {"workspace_id": "worker-id", "label": "managed", "agent_status": "idle"},
         ],
-        "panes": [{"workspace_id": "primary-id", "cwd": str(home)}],
         "agents": [{"workspace_id": "worker-id", "agent": "codex", "agent_status": "idle"}],
     }
     calls = []
@@ -270,26 +252,27 @@ def test_outside_herdr_pi_uses_connected_session_without_worker_metadata(
 
     monkeypatch.setattr(workers_module, "_capture_readonly", runner)
     text = "\n".join(workers_module.worker_messages(
-        home, herdr_session="outside-session"
+        home, herdr_session="outside-session", herdr_workspace_id="connected-id"
     ))
 
-    assert "Firstmate - firstmate" in text
+    assert "Firstmate - captain" in text
+    assert "Firstmate - Firstmate" not in text
     assert "Worker - managed" in text
     assert len(calls) == 1
     assert calls[0][1]["HERDR_SESSION"] == "outside-session"
 
 
-def test_multiple_metadata_sessions_are_unavailable_without_cross_session_leakage(
+def test_multiple_metadata_sessions_do_not_create_a_live_binding(
     tmp_path, monkeypatch,
 ):
     home = firstmate_home(tmp_path)
     (home / "state/one.meta").write_text(herdr_meta("one", "named-one", "w1:p1"))
     (home / "state/two.meta").write_text(herdr_meta("two", "named-two", "w2:p1"))
-    monkeypatch.setattr(workers_module, "_capture_readonly", lambda *args, **kwargs: (
-        pytest.fail("ambiguous metadata must not query either session")
-    ))
-    with pytest.raises(workers_module.WorkersUnavailable, match="multiple"):
-        workers_module.worker_messages(home)
+    runner, calls = fake_runner_for({}, {})
+    monkeypatch.setattr(workers_module, "_capture_readonly", runner)
+
+    assert workers_module.worker_messages(home) == ["No Firstmate task records."]
+    assert not any(call[0] == "herdr" for call in calls)
 
 
 def test_only_owned_exact_endpoints_are_queried_and_all_statuses_are_preserved(tmp_path, monkeypatch):
@@ -868,6 +851,7 @@ def test_telegram_workers_uses_connected_session_binding_without_worker_metadata
         await mirror.handle_frame({
             "t": "hello", "features": [],
             "herdr_session": "outside-session",
+            "herdr_workspace_id": "connected-id",
         })
         await mirror.handle_update({"message": {
             "message_id": 12, "from": {"id": 7},
@@ -875,7 +859,13 @@ def test_telegram_workers_uses_connected_session_binding_without_worker_metadata
         }})
 
     asyncio.run(exercise())
-    assert worker_calls == [(tmp_path, {"herdr_session": "outside-session"})]
+    assert worker_calls == [(
+        tmp_path,
+        {
+            "herdr_session": "outside-session",
+            "herdr_workspace_id": "connected-id",
+        },
+    )]
     sent = [params for method, params in calls if method == "sendMessage"]
     assert len(sent) == 1 and sent[0]["reply_parameters"]["message_id"] == 12
 
@@ -942,14 +932,18 @@ def test_workers_command_uses_safe_transport_menu_and_multiple_messages(tmp_path
         bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
     )
     mirror.client = object()
-    mirror.client_ready = True
     mirror.session_root = tmp_path
-    asyncio.run(mirror.handle_update({"message": {
-        "message_id": 3,
-        "from": {"id": 7},
-        "chat": {"id": 8, "type": "private"},
-        "text": "/workers",
-    }}))
+
+    async def exercise():
+        await mirror.handle_frame({"t": "hello", "features": []})
+        await mirror.handle_update({"message": {
+            "message_id": 3,
+            "from": {"id": 7},
+            "chat": {"id": 8, "type": "private"},
+            "text": "/workers",
+        }})
+
+    asyncio.run(exercise())
     assert [params["text"] for method, params in calls if method == "sendMessage"] == [
         f"{bot.snapshot_identity(tmp_path)}\n\npage one", "page two"
     ]

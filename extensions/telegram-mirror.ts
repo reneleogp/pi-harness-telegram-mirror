@@ -494,9 +494,9 @@ export default function (pi: ExtensionAPI) {
       const herdrSession = process.env.HERDR_SESSION;
       if (typeof herdrSocketPath === "string" && herdrSocketPath.startsWith("/")) {
         hello.herdr_socket_path = herdrSocketPath;
-        if (typeof herdrWorkspaceId === "string" && herdrWorkspaceId.length > 0) {
-          hello.herdr_workspace_id = herdrWorkspaceId;
-        }
+      }
+      if (typeof herdrWorkspaceId === "string" && herdrWorkspaceId.length > 0) {
+        hello.herdr_workspace_id = herdrWorkspaceId;
       }
       if (typeof herdrSession === "string" && herdrSession.length > 0) {
         hello.herdr_session = herdrSession;
