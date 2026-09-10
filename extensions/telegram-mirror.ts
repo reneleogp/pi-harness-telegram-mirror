@@ -491,10 +491,11 @@ export default function (pi: ExtensionAPI) {
       const hello: Record<string, unknown> = { t: "hello", features: ["image"] };
       const herdrSocketPath = process.env.HERDR_SOCKET_PATH;
       const herdrWorkspaceId = process.env.HERDR_WORKSPACE_ID;
-      if (typeof herdrSocketPath === "string" && herdrSocketPath.startsWith("/") &&
-          typeof herdrWorkspaceId === "string" && herdrWorkspaceId.length > 0) {
+      if (typeof herdrSocketPath === "string" && herdrSocketPath.startsWith("/")) {
         hello.herdr_socket_path = herdrSocketPath;
-        hello.herdr_workspace_id = herdrWorkspaceId;
+        if (typeof herdrWorkspaceId === "string" && herdrWorkspaceId.length > 0) {
+          hello.herdr_workspace_id = herdrWorkspaceId;
+        }
       }
       write(hello);
     });
