@@ -106,6 +106,7 @@ import json
 import os
 import platform
 import plistlib
+import re
 import secrets
 import shlex
 import shutil
@@ -280,6 +281,9 @@ MIRROR_ALIASES = {
     "/telegram_confirmations_on": "confirmations-on",
     "/telegram_confirmations_off": "confirmations-off",
 }
+HERDR_WORKSPACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@%+:-]*$")
+HERDR_WORKSPACE_ID_LIMIT = 128
+
 MENU_COMMANDS = [
     # Informational commands first, with quota first.
     {"command": "token_usage", "description": "Show GPT quota"},
@@ -1550,17 +1554,25 @@ class MirrorBot:
             } if isinstance(features, list) else set()
             socket_path = frame.get("herdr_socket_path")
             workspace_id = frame.get("herdr_workspace_id")
-            self.herdr_socket_path = (
-                socket_path if isinstance(socket_path, str)
+            valid_socket_path = (
+                isinstance(socket_path, str)
                 and socket_path.startswith("/") and len(socket_path) <= 4096
-                else ("" if "herdr_socket_path" in frame else None)
             )
-            self.herdr_workspace_id = (
-                workspace_id if isinstance(workspace_id, str)
-                and 1 <= len(workspace_id) <= 128
-                else None
+            valid_workspace_id = (
+                isinstance(workspace_id, str)
+                and 1 <= len(workspace_id) <= HERDR_WORKSPACE_ID_LIMIT
+                and HERDR_WORKSPACE_ID_PATTERN.fullmatch(workspace_id) is not None
             )
-            self.client_ready = True
+            if valid_socket_path:
+                self.herdr_socket_path = socket_path
+                self.herdr_workspace_id = workspace_id if valid_workspace_id else None
+                self.client_ready = valid_workspace_id
+            else:
+                self.herdr_socket_path = (
+                    "" if "herdr_socket_path" in frame else None
+                )
+                self.herdr_workspace_id = None
+                self.client_ready = True
             # State already went out when the connection was accepted.
             await self.pump()
             return

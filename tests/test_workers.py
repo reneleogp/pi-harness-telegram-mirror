@@ -175,13 +175,14 @@ def test_live_herdr_workspace_pagination_is_bounded_and_ordered(tmp_path, monkey
         "workspaces": workspaces, "agents": [],
     })
     messages = workers_module.worker_messages(
-        home, limit=700, herdr_socket_path="named.sock", herdr_workspace_id="w999"
+        home, limit=700, herdr_socket_path="named.sock", herdr_workspace_id="w0"
     )
     assert len(messages) > 1
     assert all(len(message.encode("utf-16-le")) // 2 <= 700 for message in messages)
     combined = "\n".join(messages)
     for index in range(45):
-        assert combined.count(f"Workspace - workspace-{index:02d}") == 1
+        role = "Firstmate" if index == 0 else "Workspace"
+        assert combined.count(f"{role} - workspace-{index:02d}") == 1
 
 
 def test_live_herdr_api_snapshot_protocol_is_bounded_and_exact(tmp_path):
@@ -699,6 +700,62 @@ def test_workers_snapshot_survives_session_switch(tmp_path, monkeypatch):
         f"{bot.snapshot_identity(tmp_path)}\n\nold session workers"
     ]
 
+
+@pytest.mark.parametrize("workspace_id", [None, "", "bad workspace", 17])
+def test_telegram_workers_rejects_partial_herdr_binding_before_ready(
+    tmp_path, monkeypatch, workspace_id,
+):
+    bot = load_path("pi_telegram_workers_partial_binding_bot", BOT)
+    calls = []
+
+    class FakeApi:
+        async def call(self, method, params=None, timeout=30, **kwargs):
+            calls.append((method, params))
+            return {"message_id": len(calls)}
+
+    monkeypatch.setattr(
+        bot, "worker_messages",
+        lambda _home, **_binding: (_ for _ in ()).throw(
+            AssertionError("workers queried with an incomplete Herdr binding")
+        ),
+    )
+    mirror = bot.MirrorBot(
+        bot.Config(tmp_path, "token", 7, 8, "transcribe", "fake"), FakeApi()
+    )
+    mirror.client = object()
+    mirror.session_root = tmp_path
+    hello = {
+        "t": "hello",
+        "features": [],
+        "herdr_socket_path": "/private/herdr/sessions/connected/herdr.sock",
+    }
+    if workspace_id is not None:
+        hello["herdr_workspace_id"] = workspace_id
+
+    async def exercise():
+        await mirror.handle_frame(hello)
+        await mirror.handle_update({"message": {
+            "message_id": 11,
+            "from": {"id": 7},
+            "chat": {"id": 8, "type": "private"}, "text": "/workers",
+        }})
+
+    asyncio.run(exercise())
+    assert not mirror.client_ready
+    assert calls[-1][1]["text"] == "Workers unavailable: no connected Firstmate home."
+
+
+def test_live_herdr_workspace_binding_must_match_snapshot(tmp_path, monkeypatch):
+    home = firstmate_home(tmp_path)
+    monkeypatch.setattr(workers_module, "_herdr_snapshot", lambda _path: {
+        "workspaces": [{"workspace_id": "w1", "label": "primary", "agent_status": "working"}],
+        "agents": [],
+    })
+
+    with pytest.raises(workers_module.WorkersUnavailable, match="workspace"):
+        workers_module.worker_messages(
+            home, herdr_socket_path="named.sock", herdr_workspace_id="w999"
+        )
 
 def test_telegram_workers_uses_connected_herdr_binding_and_preserves_pairing(tmp_path, monkeypatch):
     bot = load_path("pi_telegram_workers_bot_herdr_binding", BOT)

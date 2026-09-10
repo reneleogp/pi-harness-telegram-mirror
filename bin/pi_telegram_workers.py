@@ -393,6 +393,9 @@ def _herdr_snapshot(socket_path: str) -> dict[str, object]:
 
 
 def _live_workspaces(socket_path: str, primary_workspace_id: Optional[str]) -> list[LiveWorkspace]:
+    if (not isinstance(primary_workspace_id, str)
+            or not ENDPOINT_ATOM_PATTERN.fullmatch(primary_workspace_id)):
+        raise WorkersUnavailable("connected Firstmate workspace identity is invalid")
     snapshot = _herdr_snapshot(socket_path)
     raw_workspaces = snapshot.get("workspaces")
     raw_agents = snapshot.get("agents")
@@ -443,6 +446,8 @@ def _live_workspaces(socket_path: str, primary_workspace_id: Optional[str]) -> l
             agent_counts.get(workspace_id, 0),
             workspace_id == primary_workspace_id,
         ))
+    if primary_workspace_id not in seen:
+        raise WorkersUnavailable("connected Firstmate workspace is unavailable")
     return sorted(workspaces, key=lambda workspace: (
         not workspace.primary, workspace.label.casefold(), workspace.workspace_id,
     ))
