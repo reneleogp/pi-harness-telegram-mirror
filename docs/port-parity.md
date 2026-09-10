@@ -15,7 +15,7 @@ This checklist records the standalone behavior covered by the package and the va
 - [x] macOS LaunchAgent and Linux systemd user-service generation, installation, status, and removal paths.
 - [x] Explicit migration of legacy token, pairing, and settings without changing the legacy directory.
 - [x] Concise GPT quota reporting through the local Codex app-server without reading credentials or making inference calls.
-- [x] Normal startup and mirror behavior contain no Firstmate dependency; the optional `/workers` command is the only bounded, read-only integration for an authorized connected Firstmate home.
+- [x] Normal startup and mirror behavior contain no Firstmate dependency; the optional `/workers` command is the only bounded, read-only integration for an authorized connected Firstmate home and its exact live Herdr session.
 
 ## Validation evidence
 

@@ -485,8 +485,18 @@ export default function (pi: ExtensionAPI) {
       connected = true;
       refreshFooter();
       // The bot sends only what this bridge announces it can deliver, so an
-      // older bridge never receives an image it would silently drop.
-      write({ t: "hello", features: ["image"] });
+      // older bridge never receives an image it would silently drop. Herdr
+      // injects the socket and workspace into every managed pane; forwarding
+      // those exact values lets /workers read only this connected session.
+      const hello: Record<string, unknown> = { t: "hello", features: ["image"] };
+      const herdrSocketPath = process.env.HERDR_SOCKET_PATH;
+      const herdrWorkspaceId = process.env.HERDR_WORKSPACE_ID;
+      if (typeof herdrSocketPath === "string" && herdrSocketPath.startsWith("/") &&
+          typeof herdrWorkspaceId === "string" && herdrWorkspaceId.length > 0) {
+        hello.herdr_socket_path = herdrSocketPath;
+        hello.herdr_workspace_id = herdrWorkspaceId;
+      }
+      write(hello);
     });
     client.on("data", (chunk: Buffer) => {
       buffer += decoder.write(chunk);

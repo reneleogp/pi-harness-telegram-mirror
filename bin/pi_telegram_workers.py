@@ -8,6 +8,8 @@ import json
 import os
 import re
 import signal
+import socket
+import stat
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -19,6 +21,8 @@ COMMAND_OUTPUT_LIMIT = 512 * 1024
 METADATA_LIMIT = 64 * 1024
 FLEET_COMMAND_TIMEOUT = 12
 HERDR_COMMAND_TIMEOUT = 3
+HERDR_SOCKET_TIMEOUT = 3
+HERDR_SOCKET_PATH_LIMIT = 4096
 WORKER_MESSAGE_LIMIT = 3900
 FIELD_LIMIT = 180
 SUPPORTED_HERDR_STATUSES = {"working", "idle", "blocked", "done", "unknown"}
@@ -68,6 +72,16 @@ class WorkerView:
     herdr_note: str
     progress: str
     progress_note: str
+
+
+@dataclass(frozen=True)
+class LiveWorkspace:
+    workspace_id: str
+    label: str
+    status: str
+    agent_names: tuple[str, ...]
+    agent_count: int
+    primary: bool
 
 
 def _capture_readonly(argv: list[str], *, timeout: int,
@@ -329,6 +343,132 @@ def _progress(home: Path, helper: Path, worker: ManagedWorker) -> tuple[str, str
     return (state if state in supported else "unknown", safe_text(detail or "", FIELD_LIMIT))
 
 
+def _herdr_snapshot(socket_path: str) -> dict[str, object]:
+    """Read one snapshot from the exact socket announced by the Pi peer."""
+    if not isinstance(socket_path, str) or not socket_path or len(socket_path) > HERDR_SOCKET_PATH_LIMIT:
+        raise WorkersUnavailable("connected Herdr socket identity is invalid")
+    try:
+        socket_stat = Path(socket_path).lstat()
+    except OSError as exc:
+        raise WorkersUnavailable("connected Herdr session is unavailable") from exc
+    uid = getattr(os, "getuid", None)
+    if (not stat.S_ISSOCK(socket_stat.st_mode)
+            or (uid is not None and socket_stat.st_uid != uid())
+            or socket_stat.st_mode & 0o077):
+        raise WorkersUnavailable("connected Herdr socket is not owner-private")
+    request = json.dumps({
+        "id": "pi-telegram-workers",
+        "method": "session.snapshot",
+        "params": {},
+    }).encode("utf-8") + b"\n"
+    captured = bytearray()
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(HERDR_SOCKET_TIMEOUT)
+            connection.connect(socket_path)
+            connection.sendall(request)
+            while b"\n" not in captured and len(captured) <= COMMAND_OUTPUT_LIMIT:
+                chunk = connection.recv(65536)
+                if not chunk:
+                    break
+                captured.extend(chunk)
+    except (OSError, socket.timeout) as exc:
+        raise WorkersUnavailable("connected Herdr session is unavailable") from exc
+    if len(captured) > COMMAND_OUTPUT_LIMIT:
+        raise WorkersUnavailable("Herdr snapshot response is too large")
+    line = bytes(captured).split(b"\n", 1)[0]
+    try:
+        payload = json.loads(line.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError) as exc:
+        raise WorkersUnavailable("Herdr snapshot response is malformed") from exc
+    if not isinstance(payload, dict) or payload.get("id") != "pi-telegram-workers":
+        raise WorkersUnavailable("Herdr snapshot response is malformed")
+    result = payload.get("result")
+    if not isinstance(result, dict) or result.get("type") != "session_snapshot":
+        raise WorkersUnavailable("Herdr snapshot is unavailable")
+    snapshot = result.get("snapshot")
+    if not isinstance(snapshot, dict):
+        raise WorkersUnavailable("Herdr snapshot is malformed")
+    return snapshot
+
+
+def _live_workspaces(socket_path: str, primary_workspace_id: Optional[str]) -> list[LiveWorkspace]:
+    snapshot = _herdr_snapshot(socket_path)
+    raw_workspaces = snapshot.get("workspaces")
+    raw_agents = snapshot.get("agents")
+    if not isinstance(raw_workspaces, list) or not isinstance(raw_agents, list):
+        raise WorkersUnavailable("Herdr snapshot is malformed")
+    agents_by_workspace: dict[str, list[str]] = {}
+    agent_counts: dict[str, int] = {}
+    for raw_agent in raw_agents:
+        if not isinstance(raw_agent, dict):
+            raise WorkersUnavailable("Herdr snapshot is malformed")
+        workspace_id = raw_agent.get("workspace_id")
+        if not isinstance(workspace_id, str) or not ENDPOINT_ATOM_PATTERN.fullmatch(workspace_id):
+            raise WorkersUnavailable("Herdr snapshot is malformed")
+        agent_counts[workspace_id] = agent_counts.get(workspace_id, 0) + 1
+        label = raw_agent.get("agent")
+        if isinstance(label, str):
+            clean_label = safe_text(label, 60)
+            if clean_label:
+                agents_by_workspace.setdefault(workspace_id, []).append(clean_label)
+            else:
+                agents_by_workspace.setdefault(workspace_id, [])
+        else:
+            agents_by_workspace.setdefault(workspace_id, [])
+    workspaces: list[LiveWorkspace] = []
+    seen: set[str] = set()
+    for raw_workspace in raw_workspaces:
+        if not isinstance(raw_workspace, dict):
+            raise WorkersUnavailable("Herdr snapshot is malformed")
+        workspace_id = raw_workspace.get("workspace_id")
+        label = raw_workspace.get("label")
+        status = raw_workspace.get("agent_status", "unknown")
+        if (not isinstance(workspace_id, str)
+                or not ENDPOINT_ATOM_PATTERN.fullmatch(workspace_id)
+                or workspace_id in seen
+                or not isinstance(label, str)
+                or not isinstance(status, str)
+                or status not in SUPPORTED_HERDR_STATUSES):
+            raise WorkersUnavailable("Herdr snapshot is malformed")
+        seen.add(workspace_id)
+        agent_names = tuple(sorted(set(agents_by_workspace.get(workspace_id, []))))
+        if not agent_counts.get(workspace_id, 0) and status == "unknown":
+            status = "idle"
+        workspaces.append(LiveWorkspace(
+            workspace_id,
+            safe_text(label, FIELD_LIMIT) or "Unnamed workspace",
+            status,
+            agent_names,
+            agent_counts.get(workspace_id, 0),
+            workspace_id == primary_workspace_id,
+        ))
+    return sorted(workspaces, key=lambda workspace: (
+        not workspace.primary, workspace.label.casefold(), workspace.workspace_id,
+    ))
+
+
+def _live_entry(workspace: LiveWorkspace) -> str:
+    icon = {
+        "working": "🟢",
+        "idle": "⚪",
+        "blocked": "⛔",
+        "done": "✅",
+    }.get(workspace.status, "❔")
+    role = "Firstmate" if workspace.primary else "Worker" if workspace.agent_count else "Workspace"
+    lines = [
+        f"{icon} {role} - {workspace.label}",
+        f"Herdr workspace: {workspace.status}",
+    ]
+    if workspace.agent_names:
+        lines.append(f"Live agents: {safe_text(', '.join(workspace.agent_names), FIELD_LIMIT)}")
+    elif workspace.agent_count:
+        lines.append(f"Live agents: {workspace.agent_count} present")
+    else:
+        lines.append("Live agents: none")
+    return "\n".join(lines)
+
+
 def _herdr_status(worker: ManagedWorker) -> tuple[str, str]:
     if worker.backend != "herdr":
         return "unknown", "Not running in Herdr"
@@ -448,14 +588,15 @@ def _entry(view: WorkerView) -> str:
     return "\n".join(lines)
 
 
-def worker_messages(home: Path, limit: int = WORKER_MESSAGE_LIMIT) -> list[str]:
-    views = collect_worker_views(home)
-    if not views:
-        return ["No Firstmate-managed workers."]
-    entries = [_entry(view) for view in views]
+def _paginate(entries: list[str], heading: str, limit: int) -> list[str]:
+    limit = max(1, limit)
     messages: list[str] = []
-    current = "Firstmate workers"
+    current = safe_text(heading, limit)
     for entry in entries:
+        # A normal entry is deliberately much smaller than Telegram's limit.
+        # Keep the final guard for tests or callers that select a smaller page.
+        if len(entry.encode("utf-16-le")) // 2 > limit:
+            entry = safe_text(entry, max(1, limit - 1))
         candidate = f"{current}\n\n{entry}" if current else entry
         if len(candidate.encode("utf-16-le")) // 2 <= limit:
             current = candidate
@@ -466,3 +607,22 @@ def worker_messages(home: Path, limit: int = WORKER_MESSAGE_LIMIT) -> list[str]:
     if current:
         messages.append(current)
     return messages
+
+
+def worker_messages(home: Path, limit: int = WORKER_MESSAGE_LIMIT, *,
+                    herdr_socket_path: Optional[str] = None,
+                    herdr_workspace_id: Optional[str] = None) -> list[str]:
+    if herdr_socket_path is not None:
+        workspaces = _live_workspaces(herdr_socket_path, herdr_workspace_id)
+        if not workspaces:
+            return ["No open Herdr workspaces."]
+        return _paginate([_live_entry(workspace) for workspace in workspaces],
+                         "Herdr workspaces", limit)
+
+    # A Pi session outside Herdr has no live workspace authority. Keep the
+    # historical task view as a clearly separate fallback, never as a claim
+    # about open Herdr contexts.
+    views = collect_worker_views(home)
+    if not views:
+        return ["No Firstmate task records."]
+    return _paginate([_entry(view) for view in views], "Firstmate task records", limit)
