@@ -769,8 +769,11 @@ def test_workers_snapshot_survives_session_switch(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("workspace_id", [None, "", "bad workspace", 17])
+@pytest.mark.parametrize("socket_path", [
+    "/private/herdr/sessions/connected/herdr.sock", "", "relative.sock",
+])
 def test_telegram_workers_rejects_partial_herdr_binding_before_ready(
-    tmp_path, monkeypatch, workspace_id,
+    tmp_path, monkeypatch, workspace_id, socket_path,
 ):
     bot = load_path("pi_telegram_workers_partial_binding_bot", BOT)
     calls = []
@@ -794,7 +797,7 @@ def test_telegram_workers_rejects_partial_herdr_binding_before_ready(
     hello = {
         "t": "hello",
         "features": [],
-        "herdr_socket_path": "/private/herdr/sessions/connected/herdr.sock",
+        "herdr_socket_path": socket_path,
     }
     if workspace_id is not None:
         hello["herdr_workspace_id"] = workspace_id
